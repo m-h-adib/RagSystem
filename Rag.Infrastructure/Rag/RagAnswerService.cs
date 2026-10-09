@@ -479,10 +479,10 @@ public sealed class RagAnswerService(
         // Permit at most one single-character typo in one token, while requiring
         // all other tokens to match in the same order and contiguously. This does
         // not accept paraphrases or unrelated evidence.
-        var evidenceTokens = Regex.Matches(normalizedEvidence, @"[\\p{L}\\p{Nd}]+")
+        var evidenceTokens = Regex.Matches(normalizedEvidence, @"[\p{L}\p{Nd}]+")
             .Select(match => match.Value)
             .ToArray();
-        var sourceTokens = Regex.Matches(normalizedSource, @"[\\p{L}\\p{Nd}]+")
+        var sourceTokens = Regex.Matches(normalizedSource, @"[\p{L}\p{Nd}]+")
             .Select(match => match.Value)
             .ToArray();
 
