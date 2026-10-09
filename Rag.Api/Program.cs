@@ -15,8 +15,12 @@ using Rag.Infrastructure.Rag;
 using Rag.Infrastructure.Reranking;
 using Rag.Infrastructure.VectorStore.Qdrant;
 using System.Reflection;
+using System.Text;
 
 var builder = WebApplication.CreateBuilder(args);
+
+Console.OutputEncoding = Encoding.UTF8;
+Console.InputEncoding = Encoding.UTF8;
 
 // Services
 builder.Services.AddControllers();
