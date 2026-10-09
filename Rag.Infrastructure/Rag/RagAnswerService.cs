@@ -203,7 +203,7 @@ public sealed class RagAnswerService(
             اگر حتی یک ادعای مهم شاهد مستقیم ندارد، یا شاهد نقل‌شده ادعا را نتیجه نمی‌دهد، آن ادعا را supported=false علامت بزن.
             در کل supported فقط وقتی true باشد که فهرست ادعاها خالی نباشد، تمام ادعاها supported=true باشند و برای هر ادعا شاهد دقیق وجود داشته باشد.
             فیلد evidence باید نقل‌قول عین متن منبع باشد؛ اگر شاهدی نیست، رشته خالی باشد.
-            فقط JSON با فیلدهای supported (boolean)، reason (string) و claimChecks (آرایه‌ای از {{claim (string), supported (boolean), evidence (string)}}) برگردان.
+            فقط JSON برگردان که شامل فیلد supported از نوع boolean، فیلد reason از نوع string و فیلد claimChecks از نوع آرایه باشد. هر عضو claimChecks باید سه فیلد داشته باشد: claim از نوع string، supported از نوع boolean و evidence از نوع string.
             """;
 
         var request = new
