@@ -342,9 +342,93 @@ public sealed class RagAnswerService(
             return false;
 
         var normalizedEvidence = NormalizeEvidenceText(evidence);
-        return normalizedEvidence.Length >= 12 &&
-            NormalizeEvidenceText(sourceText).Contains(
-                normalizedEvidence, StringComparison.Ordinal);
+        if (normalizedEvidence.Length < 12)
+            return false;
+
+        var normalizedSource = NormalizeEvidenceText(sourceText);
+        if (normalizedSource.Contains(normalizedEvidence, StringComparison.Ordinal))
+            return true;
+
+        // Ollama occasionally makes a one-character typo while copying a quote.
+        // Permit at most one single-character typo in one token, while requiring
+        // all other tokens to match in the same order and contiguously. This does
+        // not accept paraphrases or unrelated evidence.
+        var evidenceTokens = Regex.Matches(normalizedEvidence, @"[\\p{L}\\p{Nd}]+")
+            .Select(match => match.Value)
+            .ToArray();
+        var sourceTokens = Regex.Matches(normalizedSource, @"[\\p{L}\\p{Nd}]+")
+            .Select(match => match.Value)
+            .ToArray();
+
+        if (evidenceTokens.Length < 3 || sourceTokens.Length < evidenceTokens.Length)
+            return false;
+
+        for (var start = 0; start <= sourceTokens.Length - evidenceTokens.Length; start++)
+        {
+            var typoCount = 0;
+            var matches = true;
+
+            for (var offset = 0; offset < evidenceTokens.Length; offset++)
+            {
+                var expected = evidenceTokens[offset];
+                var actual = sourceTokens[start + offset];
+
+                if (string.Equals(expected, actual, StringComparison.Ordinal))
+                    continue;
+
+                if (typoCount > 0 || expected.Length < 5 || actual.Length < 5 ||
+                    !DiffersByOneCharacter(expected, actual))
+                {
+                    matches = false;
+                    break;
+                }
+
+                typoCount++;
+            }
+
+            if (matches && typoCount == 1)
+                return true;
+        }
+
+        return false;
+    }
+
+    private static bool DiffersByOneCharacter(string left, string right)
+    {
+        if (Math.Abs(left.Length - right.Length) > 1)
+            return false;
+
+        var leftIndex = 0;
+        var rightIndex = 0;
+        var differences = 0;
+
+        while (leftIndex < left.Length && rightIndex < right.Length)
+        {
+            if (left[leftIndex] == right[rightIndex])
+            {
+                leftIndex++;
+                rightIndex++;
+                continue;
+            }
+
+            if (++differences > 1)
+                return false;
+
+            if (left.Length > right.Length)
+                leftIndex++;
+            else if (right.Length > left.Length)
+                rightIndex++;
+            else
+            {
+                leftIndex++;
+                rightIndex++;
+            }
+        }
+
+        if (leftIndex < left.Length || rightIndex < right.Length)
+            differences++;
+
+        return differences == 1;
     }
 
     private static bool HasSufficientClaimEvidence(string? claim, string? evidence)
