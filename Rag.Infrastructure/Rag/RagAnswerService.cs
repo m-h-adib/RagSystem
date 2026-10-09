@@ -5,6 +5,7 @@ using Rag.Infrastructure.Ollama;
 using Rag.Infrastructure.Rag.Models;
 using System.Net.Http.Json;
 using System.Text.Json;
+using System.Text.RegularExpressions;
 
 namespace Rag.Infrastructure.Rag;
 
@@ -209,7 +210,53 @@ public sealed class RagAnswerService(
 			.OrderBy(number => number)
 			.ToList();
 
+		foreach (var sourceNumber in sourceNumbers)
+		{
+			if (TryBuildGroupedOpinionAnswer(contextResults[sourceNumber - 1].Chunk.Text, out var groupedAnswer))
+			{
+				answer = groupedAnswer;
+				break;
+			}
+		}
+
 		return new RagAnswerResult(answer, sourceNumbers);
+	}
+
+
+	private static bool TryBuildGroupedOpinionAnswer(string sourceText, out string answer)
+	{
+		answer = string.Empty;
+		if (string.IsNullOrWhiteSpace(sourceText))
+		{
+			return false;
+		}
+
+		var text = sourceText.Replace('ي', 'ی').Replace('ك', 'ک');
+		var matches = Regex.Matches(
+			text,
+			@"(?m)^\s*\d+\s*[\p{P}\p{Cf}]*\s*(?<ruling>.*?)[؛;]\s*آیات\s+عظام\s*:\s*(?<names>[^\r\n]+?)\s*\.?\s*$",
+			RegexOptions.CultureInvariant);
+
+		if (matches.Count < 2)
+		{
+			return false;
+		}
+
+		var groups = new List<string>(matches.Count);
+		foreach (Match match in matches)
+		{
+			var ruling = match.Groups["ruling"].Value.Trim().TrimEnd('؛', ';', '.', ' ');
+			var names = match.Groups["names"].Value.Trim().TrimEnd('.', ' ');
+			if (string.IsNullOrWhiteSpace(ruling) || string.IsNullOrWhiteSpace(names))
+			{
+				return false;
+			}
+
+			groups.Add($"{groups.Count + 1}. {ruling}: {names}.");
+		}
+
+		answer = string.Join(Environment.NewLine, groups);
+		return true;
 	}
 
 	private sealed class OllamaResponse
