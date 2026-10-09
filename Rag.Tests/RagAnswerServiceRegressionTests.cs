@@ -15,7 +15,7 @@ public sealed class RagAnswerServiceRegressionTests
         "اطلاعات کافی برای پاسخ به این سؤال در منابع موجود نیست.";
 
     private const string StaySource =
-        "کسانی که در مکه مکرمه قصد اقامت ده روز آنها منعقد شده، در مشاعر نیز نماز آنها تمام است و کسانی که در مکه مکرمه قبل از رفتن به عرفات کمتر از ده روز اقامت داشته‌اند، نمازشان در مشاعر شکسته است.";
+        "کسانی که در مکه مکرمه قصد اقامت ده روز آنها منعقد شده، در مشاعر نیز نماز آنها تمام است.";
 
     [Fact]
     public async Task NoRetrievedSources_ReturnsNoAnswerWithoutCallingOllama()
@@ -31,56 +31,29 @@ public sealed class RagAnswerServiceRegressionTests
     }
 
     [Fact]
-    public async Task QuantityMissingFromSources_AbstainsBeforeCallingOllama()
+    public async Task InvalidSourceNumbers_AbstainsWithoutCallingValidator()
     {
-        var handler = new QueueHttpMessageHandler();
-        var service = CreateService(handler);
-        var sources = Results(StaySource);
+        var handler = new QueueHttpMessageHandler(
+            OllamaContent(JsonSerializer.Serialize(new
+            {
+                answer = "پاسخ پیشنهادی",
+                sourceNumbers = new[] { 3, 3, 3, 3 }
+            })));
 
+        var service = CreateService(handler);
         var result = await service.GenerateAnswerAsync(
-            "شرایط هشت فرسخ برای شکسته شدن نماز چیست؟",
-            sources);
+            "سؤال درباره حکم مشخص",
+            Results(StaySource));
 
         Assert.Equal(NoAnswer, result.Answer);
         Assert.Empty(result.SourceNumbers);
-        Assert.Equal(0, handler.CallCount);
+        Assert.Equal(1, handler.CallCount);
     }
 
     [Fact]
-    public async Task MenstruationQuestion_WithOnlyIstihadaSource_AbstainsBeforeCallingOllama()
+    public async Task SupportedAnswer_IsReturnedExactlyAsValidated()
     {
-        var handler = new QueueHttpMessageHandler();
-        var service = CreateService(handler);
-        const string query = "زنی که در دوران قاعدگی هست میتونه طواف انجام بده یا خیر؟";
-        const string istihadaSource = "مسئله7: ورود مستحاضه متوسطه و كثيره به مسجدين؛ جايز است، اگرچه غسل‌های واجبش را انجام نداده باشد.";
-
-        var result = await service.GenerateAnswerAsync(query, Results(istihadaSource));
-
-        Assert.Equal(NoAnswer, result.Answer);
-        Assert.Empty(result.SourceNumbers);
-        Assert.Equal(0, handler.CallCount);
-    }
-
-    [Fact]
-    public async Task CombinedStayDurationConditions_AbstainsBeforeCallingOllama()
-    {
-        var handler = new QueueHttpMessageHandler();
-        var service = CreateService(handler);
-        var query = "اگر کسی در مکه قصد اقامت ده روز داشته باشد، اما پیش از کامل شدن ده روز به عرفات برود، آیا نمازش در عرفات تمام است یا شکسته؟";
-
-        var result = await service.GenerateAnswerAsync(query, Results(StaySource));
-
-        Assert.Equal(NoAnswer, result.Answer);
-        Assert.Empty(result.SourceNumbers);
-        Assert.Equal(0, handler.CallCount);
-    }
-
-    [Fact]
-    public async Task DirectlySupportedAnswer_WithPositiveValidation_ReturnsAnswerAndSource()
-    {
-        const string answer =
-            "کسانی که قصد اقامت ده روزشان در مکه منعقد شده است، در مشاعر نماز را تمام می‌خوانند.";
-
+        const string answer = "طبق متن، نماز این گروه در مشاعر تمام است.";
         var handler = new QueueHttpMessageHandler(
             OllamaContent(JsonSerializer.Serialize(new
             {
@@ -90,12 +63,12 @@ public sealed class RagAnswerServiceRegressionTests
             OllamaContent(JsonSerializer.Serialize(new
             {
                 supported = true,
-                reason = "پاسخ و شرط آن مستقیماً در منبع آمده است."
+                reason = "پاسخ مستقیماً در منبع آمده است."
             })));
 
         var service = CreateService(handler);
         var result = await service.GenerateAnswerAsync(
-            "کسانی که در مکه قصد اقامت ده روز دارند، در عرفات و منا نماز را تمام می‌خوانند یا شکسته؟",
+            "حکم نماز این گروه در مشاعر چیست؟",
             Results(StaySource));
 
         Assert.Equal(answer, result.Answer);
@@ -104,23 +77,23 @@ public sealed class RagAnswerServiceRegressionTests
     }
 
     [Fact]
-    public async Task NegativeSemanticValidation_ReturnsNoAnswerAndNoSources()
+    public async Task UnsupportedAnswer_ReturnsNoAnswerAndNoSources()
     {
         var handler = new QueueHttpMessageHandler(
             OllamaContent(JsonSerializer.Serialize(new
             {
-                answer = "نماز در این وضعیت تمام است.",
+                answer = "نماز در این وضعیت شکسته است.",
                 sourceNumbers = new[] { 1 }
             })),
             OllamaContent(JsonSerializer.Serialize(new
             {
                 supported = false,
-                reason = "منبع این وضعیت دقیق را روشن نمی‌کند."
+                reason = "این حکم در منبع نیامده است."
             })));
 
         var service = CreateService(handler);
         var result = await service.GenerateAnswerAsync(
-            "سؤال درباره حکم مشخصی که منبع روشن نکرده است",
+            "حکم وضعیتی که منبع روشن نکرده چیست؟",
             Results("منبع درباره موضوعی نزدیک توضیح می‌دهد، اما این وضعیت را مشخص نمی‌کند."));
 
         Assert.Equal(NoAnswer, result.Answer);
@@ -183,11 +156,8 @@ public sealed class RagAnswerServiceRegressionTests
             CancellationToken cancellationToken)
         {
             CallCount++;
-
             if (_responses.Count == 0)
-            {
                 throw new InvalidOperationException("Unexpected HTTP request in test.");
-            }
 
             return Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK)
             {

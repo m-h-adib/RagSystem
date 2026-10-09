@@ -14,7 +14,6 @@ using Rag.Infrastructure.Ollama;
 using Rag.Infrastructure.Rag;
 using Rag.Infrastructure.Reranking;
 using Rag.Infrastructure.VectorStore.Qdrant;
-using System.Reflection;
 using System.Text;
 
 var builder = WebApplication.CreateBuilder(args);
@@ -80,8 +79,6 @@ client.BaseAddress = new Uri(options.BaseUrl);
 client.Timeout = TimeSpan.FromMinutes(10);
 });
 
-و:
-
 ///bge3
 builder.Services
 	.AddOptions<BgeM3Options>()
@@ -115,7 +112,6 @@ builder.Services.AddHttpClient<
 		client.Timeout = TimeSpan.FromMinutes(5);
 	});
 
-
 ///qdrant
 builder.Services
 	.AddOptions<QdrantOptions>()
@@ -147,12 +143,6 @@ builder.Services.AddSingleton<QdrantClient>(serviceProvider =>
 
 builder.Services.AddScoped<IVectorStore, QdrantVectorStore>();
 
-
-
-builder.Services.AddScoped<IDocumentIngestionService, DocumentIngestionService>();
-
-
-
 ///reranker
 builder.Services
     .AddOptions<BgeRerankerOptions>()
@@ -177,7 +167,6 @@ builder.Services.AddHttpClient<IRerankerService, BgeRerankerService>(
 		client.Timeout = TimeSpan.FromMinutes(5);
 	});
 
-
 ///rag
 builder.Services
 	.AddOptions<RagOptions>()
@@ -200,25 +189,6 @@ builder.Services.AddHttpClient<IRagAnswerService, RagAnswerService>(
 		client.BaseAddress = new Uri(options.BaseUrl);
 		client.Timeout = TimeSpan.FromMinutes(10);
 	});
-
-
-
-///parser
-builder.Services.AddScoped<
-	IWordDocumentParser,
-	WordDocumentParser>();
-
-builder.Services.AddScoped<
-	IDocumentStructureBuilder,
-	DocumentStructureBuilder>();
-
-builder.Services.AddScoped<
-	IStructuredDocumentChunkingService,
-	StructuredDocumentChunkingService>();
-
-builder.Services.AddScoped<
-	IWordDocumentIngestionService,
-	WordDocumentIngestionService>();
 
 builder.Services.AddScoped<IChunkImportService, ChunkImportService>();
 
