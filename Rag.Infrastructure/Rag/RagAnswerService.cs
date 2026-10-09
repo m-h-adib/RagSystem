@@ -262,29 +262,22 @@ public sealed class RagAnswerService(
                 numbers.ValueKind != JsonValueKind.Array)
                 return null;
 
-            var modelSelected = numbers
-                .EnumerateArray()
-                .Where(item =>
-                    item.ValueKind == JsonValueKind.Number &&
-                    item.TryGetInt32(out _))
-                .Select(item => item.GetInt32())
-                .Where(number =>
-                    number >= 1 &&
-                    number <= candidateResults.Count)
-                .Distinct()
-                .OrderBy(number => number)
-                .ToList();
+			var selected = numbers.ValueKind == JsonValueKind.Array
+	         ? numbers.EnumerateArray()
+		         .Where(item =>
+			         item.ValueKind == JsonValueKind.Number &&
+			         item.TryGetInt32(out _))
+		         .Select(item => item.GetInt32())
+		         .Where(number =>
+			         number >= 1 &&
+			         number <= candidateResults.Count)
+		         .Distinct()
+		         .OrderBy(number => number)
+		         .ToList()
+	         : new List<int>();
 
-            // The LLM relevance classifier is a ranking aid, not a trusted authority.
-            // Apply a deterministic, domain-agnostic lexical gate before context building.
-            var selected = modelSelected
-                .Where(number => RagSourceRelevanceGuard.IsRelevant(
-                    query, candidateResults[number - 1].Chunk))
-                .ToList();
-
-            Console.WriteLine(
-                $"[RAG DEBUG] Relevant source candidates: {string.Join(", ", selected)} " +
-                $"(model selected: {string.Join(", ", modelSelected)})");
+			Console.WriteLine(
+                $"[RAG DEBUG] Relevant source candidates: {string.Join(", ", selected)}");
             return selected;
         }
         catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
