@@ -48,6 +48,9 @@ public sealed class SearchController(
                 : request.DocumentId.Trim(),
             cancellationToken: cancellationToken);
 
+        Console.WriteLine(
+            $"[RAG DEBUG] Vector results: {vectorResults.Count}");
+
         if (vectorResults.Count == 0)
             return Ok(new { answer = NoAnswer, sources = Array.Empty<object>() });
 
@@ -60,6 +63,12 @@ public sealed class SearchController(
             .Where(x => x.Score >= _ragOptions.MinRelevanceScore)
             .Take(_ragOptions.ContextCount)
             .ToList();
+
+        Console.WriteLine(
+            $"[RAG DEBUG] Reranked results: {rerankedResults.Count}");
+        Console.WriteLine(
+            $"[RAG DEBUG] Relevant results: {relevantResults.Count}, " +
+            $"MinScore: {_ragOptions.MinRelevanceScore}");
 
         if (relevantResults.Count == 0)
             return Ok(new { answer = NoAnswer, sources = Array.Empty<object>() });
