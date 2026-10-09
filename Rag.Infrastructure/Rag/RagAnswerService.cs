@@ -152,7 +152,7 @@ public sealed class RagAnswerService(
         var allSources = string.Join(
             "\n\n",
             contextResults.Select((result, index) =>
-                $"[منبع {index + 1}]\\nعنوان: {result.Chunk.Title ?? ""}\\nمتن: {result.Chunk.Text}"));
+                $"[منبع {index + 1}]\nعنوان: {result.Chunk.Title ?? ""}\nمتن: {result.Chunk.Text}"));
 
         var validatedSourceNumbers = await IsAnswerSupportedAsync(
             query, answer, allSources, contextResults, cancellationToken);
@@ -210,7 +210,7 @@ public sealed class RagAnswerService(
             برای هر شاهد، sourceNumber را شماره همان منبعی قرار بده که بدنه‌اش شامل نقل‌قول است؛ شماره باید با برچسب [منبع N] مطابقت داشته باشد.
             اگر شاهدی نیست، evidence را رشته خالی و sourceNumber را 0 قرار بده.
             فیلد evidence باید نقل‌قول عین متن بدنه همان منبع باشد؛ عنوان و برچسب منبع جزو شاهد نیستند.
-            فقط JSON برگردان که شامل فیلد supported از نوع boolean، فیلد reason از نوع string و فیلد claimChecks از نوع آرایه باشد. هر عضو claimChecks باید سه فیلد داشته باشد: claim از نوع string، supported از نوع boolean و evidence از نوع string.
+            فقط JSON برگردان که شامل فیلدهای supported از نوع boolean، reason از نوع string و claimChecks از نوع آرایه باشد. هر عضو claimChecks باید فیلدهای claim از نوع string، supported از نوع boolean، evidence از نوع string و sourceNumber از نوع integer داشته باشد.
             """;
 
         var request = new
@@ -259,7 +259,7 @@ public sealed class RagAnswerService(
                 cancellationToken);
             var raw = ollamaResponse?.Message.Content;
             if (string.IsNullOrWhiteSpace(raw))
-                return false;
+                return null;
 
             Console.WriteLine("===== OLLAMA RAW SUPPORT VALIDATION =====");
             Console.WriteLine(raw);
@@ -306,7 +306,7 @@ public sealed class RagAnswerService(
             }
 
             // Fail closed unless every checked claim has a verbatim evidence quote
-            // present in the selected source text.
+            // present in the cited source body.
             return validation?.Supported == true && evidenceIsGrounded
                 ? evidenceSourceNumbers.OrderBy(number => number).ToList()
                 : null;
