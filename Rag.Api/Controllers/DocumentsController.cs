@@ -12,7 +12,7 @@ public sealed class DocumentsController(IChunkImportService chunkImportService)
     [HttpPost("import-chunks")]
     [Consumes("multipart/form-data")]
     public async Task<IActionResult> ImportChunks(
-        [FromForm] IFormFile file,
+        IFormFile file,
         CancellationToken cancellationToken)
     {
         if (file is null || file.Length == 0)

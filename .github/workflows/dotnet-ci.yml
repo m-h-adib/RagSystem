@@ -1,0 +1,37 @@
+name: .NET CI
+
+on:
+  push:
+    branches:
+      - master
+      - "refactor/**"
+      - "fix/**"
+      - "stabilize/**"
+  pull_request:
+    branches:
+      - master
+
+permissions:
+  contents: read
+
+jobs:
+  build-and-test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 9.0.x
+
+      - name: Restore
+        run: dotnet restore RagSystem.sln
+
+      - name: Build
+        run: dotnet build RagSystem.sln --configuration Release --no-restore
+
+      - name: Test
+        run: dotnet test RagSystem.sln --configuration Release --no-build --logger "trx;LogFileName=tests.trx"

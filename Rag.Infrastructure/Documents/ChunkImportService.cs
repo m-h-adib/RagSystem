@@ -32,60 +32,41 @@ public sealed class ChunkImportService(
 
         var chunks = new List<Chunk>();
 
-        for (var inputIndex = 0; inputIndex < input.Chunks.Count; inputIndex++)
+        foreach (var item in input.Chunks)
         {
-            var item = input.Chunks[inputIndex];
             if (item is null || string.IsNullOrWhiteSpace(item.Text))
                 continue;
 
-            var parts = NumberedListChunkSplitter.Split(item.Text);
-            foreach (var part in parts)
+            // JSON is the source of truth: one valid input chunk becomes one stored chunk.
+            // Only metadata is enriched; chunk text and title are not split or rewritten.
+            var metadata = new Dictionary<string, string>();
+            if (input.Metadata is not null)
             {
-                // Inherit book-level metadata so retrieval/reranking can distinguish
-                // books and categories without topic-specific application rules.
-                var metadata = new Dictionary<string, string>();
-                if (input.Metadata is not null)
-                {
-                    foreach (var pair in input.Metadata)
-                        metadata[$"document.{pair.Key}"] = pair.Value;
-                }
-
-                if (item.Metadata is not null)
-                {
-                    foreach (var pair in item.Metadata)
-                        metadata[pair.Key] = pair.Value;
-                }
-
-                if (part.ListItemNumber is not null)
-                {
-                    metadata["parentChunkIndex"] = inputIndex.ToString(
-                        System.Globalization.CultureInfo.InvariantCulture);
-                    metadata["listItemNumber"] = part.ListItemNumber.Value.ToString(
-                        System.Globalization.CultureInfo.InvariantCulture);
-                }
-
-                var title = string.IsNullOrWhiteSpace(item.Title)
-                    ? null
-                    : part.ListItemNumber is null
-                        ? item.Title.Trim()
-                        : $"{item.Title.Trim()} — بند {part.ListItemNumber.Value}";
-
-                chunks.Add(new Chunk
-                {
-                    Id = Guid.NewGuid().ToString("N"),
-                    DocumentId = document.Id,
-                    Text = part.Text,
-                    Title = title,
-                    Index = chunks.Count,
-                    Metadata = metadata.Count == 0 ? null : metadata
-                });
+                foreach (var pair in input.Metadata)
+                    metadata[$"document.{pair.Key}"] = pair.Value;
             }
+
+            if (item.Metadata is not null)
+            {
+                foreach (var pair in item.Metadata)
+                    metadata[pair.Key] = pair.Value;
+            }
+
+            chunks.Add(new Chunk
+            {
+                Id = Guid.NewGuid().ToString("N"),
+                DocumentId = document.Id,
+                Text = item.Text,
+                Title = string.IsNullOrWhiteSpace(item.Title) ? null : item.Title.Trim(),
+                Index = chunks.Count,
+                Metadata = metadata.Count == 0 ? null : metadata
+            });
         }
 
         if (chunks.Count == 0)
             throw new ArgumentException("هیچ Chunk معتبری در سند وجود ندارد.");
 
-        // Use exactly the same enriched representation for every JSON-imported chunk.
+        // Use the same enriched representation for every JSON-imported chunk.
         var embeddingTexts = chunks.Select(ChunkSearchTextBuilder.Build).ToList();
         var embeddings = await embeddingService.GenerateBatchAsync(
             embeddingTexts,
