@@ -59,6 +59,16 @@ public sealed class SearchController(
             vectorResults.Select(x => x.Chunk).ToList(),
             cancellationToken);
 
+        Console.WriteLine(
+            $"[RAG DEBUG] Reranker scores: " +
+            $"{string.Join(", ", rerankedResults.Select(x => x.Score))}");
+
+        Console.WriteLine(
+            $"[RAG DEBUG] Score min: " +
+            $"{(rerankedResults.Count > 0 ? rerankedResults.Min(x => x.Score) : 0)}, " +
+            $"max: " +
+            $"{(rerankedResults.Count > 0 ? rerankedResults.Max(x => x.Score) : 0)}");
+
         var relevantResults = rerankedResults
             .Where(x => x.Score >= _ragOptions.MinRelevanceScore)
             .Take(_ragOptions.ContextCount)
