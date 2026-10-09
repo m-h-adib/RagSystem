@@ -50,6 +50,10 @@ public sealed class RagAnswerService(
                 {x.Chunk.Text}
                 """));
 
+        Console.WriteLine("[RAG DEBUG] Context passed to Ollama:");
+        Console.WriteLine(context);
+        Console.WriteLine("[RAG DEBUG] End of Ollama context.");
+
 		var prompt =
 			$"""
             شما یک دستیار پرسش و پاسخ مبتنی بر منابع هستید.
