@@ -29,6 +29,20 @@ public sealed class RagAnswerServiceRegressionTests
     }
 
     [Fact]
+    public async Task InvalidRelevancePayload_FailsClosedWithoutGeneratingAnAnswer()
+    {
+        var handler = new QueueHttpMessageHandler(
+            OllamaContent(new { relevantSourceNumbers = "1" }));
+
+        var result = await CreateService(handler).GenerateAnswerAsync(
+            "سؤال آزمایشی", Results("متن منبع"));
+
+        Assert.Equal(NoAnswer, result.Answer);
+        Assert.Empty(result.SourceNumbers);
+        Assert.Equal(1, handler.CallCount);
+    }
+
+    [Fact]
     public async Task InvalidSourceNumbers_AbstainsWithoutCallingValidator()
     {
         var handler = new QueueHttpMessageHandler(
@@ -37,7 +51,7 @@ public sealed class RagAnswerServiceRegressionTests
             {
                 answer = "پاسخ پیشنهادی",
                 sourceNumbers = new[] { 3, 3, 3, 3 }
-            })));
+            }));
 
         var result = await CreateService(handler).GenerateAnswerAsync(
             "سؤال درباره حکم مشخص", Results("منبع مرتبط"));
@@ -150,7 +164,7 @@ public sealed class RagAnswerServiceRegressionTests
             {
                 answer = "پاسخ پیشنهادی",
                 sourceNumbers = new[] { 1 }
-            })),
+            }),
             OllamaContent("not-json"));
 
         var result = await CreateService(handler).GenerateAnswerAsync(
