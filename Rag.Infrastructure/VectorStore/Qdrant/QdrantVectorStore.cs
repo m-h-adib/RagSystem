@@ -24,6 +24,9 @@ public sealed class QdrantVectorStore(
         if (chunks.Count == 0)
             return;
 
+        // Create the collection on first import if it does not exist.
+        await EnsureCollectionExistsAsync(cancellationToken);
+
         var points = new List<PointStruct>(chunks.Count);
 
         for (var i = 0; i < chunks.Count; i++)
@@ -131,6 +134,25 @@ public sealed class QdrantVectorStore(
 
             return new VectorSearchResult(chunk, result.Score);
         }).ToList();
+    }
+
+    private async Task EnsureCollectionExistsAsync(
+        CancellationToken cancellationToken)
+    {
+        var collections = await client.ListCollectionsAsync(
+            cancellationToken: cancellationToken);
+
+        if (collections.Contains(_options.CollectionName, StringComparer.Ordinal))
+            return;
+
+        await client.CreateCollectionAsync(
+            collectionName: _options.CollectionName,
+            vectorsConfig: new VectorParams
+            {
+                Size = (ulong)_options.VectorSize,
+                Distance = Distance.Cosine
+            },
+            cancellationToken: cancellationToken);
     }
 
     private static string GetPayloadString(IDictionary<string, Value> payload, string key) =>
