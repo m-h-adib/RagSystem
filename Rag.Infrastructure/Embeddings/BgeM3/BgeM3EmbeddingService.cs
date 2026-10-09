@@ -1,0 +1,84 @@
+﻿using Microsoft.Extensions.Options;
+using Rag.Application.Abstractions.Embeddings;
+using System;
+using System.Collections.Generic;
+using System.Linq;
+using System.Net.Http.Json;
+using System.Text;
+using System.Threading.Tasks;
+
+namespace Rag.Infrastructure.Embeddings.BgeM3;
+
+public sealed class BgeM3EmbeddingService(
+HttpClient httpClient,
+IOptions<BgeM3Options> options)
+: IEmbeddingService
+{
+	private readonly BgeM3Options _options = options.Value;
+
+	public async Task<EmbeddingResult> GenerateAsync(
+		string text,
+		CancellationToken cancellationToken = default)
+	{
+		if (string.IsNullOrWhiteSpace(text))
+		{
+			throw new ArgumentException(
+				"Text cannot be empty.",
+				nameof(text));
+		}
+
+		var request = new BgeM3EmbeddingRequest
+		{
+			Text = text
+		};
+
+		using var response = await httpClient.PostAsJsonAsync(
+			"/embedding",
+			request,
+			cancellationToken);
+
+		response.EnsureSuccessStatusCode();
+
+		var result =
+			await response.Content.ReadFromJsonAsync<BgeM3EmbeddingResponse>(
+				cancellationToken);
+
+		if (result is null)
+		{
+			throw new InvalidOperationException(
+				"BGE-M3 returned an empty response.");
+		}
+
+		if (result.Embedding.Count != _options.Dimension)
+		{
+			throw new InvalidOperationException(
+				$"Invalid embedding dimension. " +
+				$"Expected {_options.Dimension}, " +
+				$"received {result.Embedding.Count}.");
+		}
+
+		return new EmbeddingResult(result.Embedding);
+	}
+
+	public async Task<IReadOnlyList<EmbeddingResult>> GenerateBatchAsync(
+		IReadOnlyList<string> texts,
+		CancellationToken cancellationToken = default)
+	{
+		if (texts.Count == 0)
+		{
+			return [];
+		}
+
+		var results = new List<EmbeddingResult>(texts.Count);
+
+		foreach (var text in texts)
+		{
+			results.Add(
+				await GenerateAsync(
+					text,
+					cancellationToken));
+		}
+
+		return results;
+	}
+}

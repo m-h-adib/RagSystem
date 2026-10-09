@@ -1,0 +1,70 @@
+﻿using Rag.Application.Abstractions.Documents;
+using Rag.Application.Abstractions.Embeddings;
+using Rag.Application.Abstractions.VectorStore;
+using Rag.Domain.Entities;
+using System;
+using System.Collections.Generic;
+using System.Linq;
+using System.Text;
+using System.Threading.Tasks;
+
+namespace Rag.Infrastructure.Documents;
+
+public sealed class ChunkImportService(
+	IEmbeddingService embeddingService,
+	IVectorStore vectorStore)
+	: IChunkImportService
+{
+	public async Task<(Document Document, IReadOnlyList<Chunk> Chunks)> ImportAsync(
+		ChunkImportDocument input,
+		CancellationToken cancellationToken = default)
+	{
+		if (string.IsNullOrWhiteSpace(input.Name))
+			throw new ArgumentException("نام سند الزامی است.");
+
+		if (input.Chunks.Count == 0)
+			throw new ArgumentException("سند حداقل باید یک Chunk داشته باشد.");
+
+		var document = new Document
+		{
+			Id = Guid.NewGuid().ToString("N"),
+			Name = input.Name.Trim(),
+			Description = input.Description,
+			Metadata = input.Metadata
+		};
+
+		var chunks = input.Chunks
+			.Where(x => !string.IsNullOrWhiteSpace(x.Text))
+			.Select((x, index) => new Chunk
+			{
+				Id = Guid.NewGuid().ToString("N"),
+				DocumentId = document.Id,
+				Text = x.Text.Trim(),
+				Title = string.IsNullOrWhiteSpace(x.Title)
+					? null
+					: x.Title.Trim(),
+				Index = index,
+				Metadata = x.Metadata
+			})
+			.ToList();
+
+		if (chunks.Count == 0)
+			throw new ArgumentException(
+				"هیچ Chunk معتبری در سند وجود ندارد.");
+
+		var texts = chunks
+			.Select(x => x.Text)
+			.ToList();
+
+		var embeddings = await embeddingService.GenerateBatchAsync(
+			texts,
+			cancellationToken);
+
+		await vectorStore.UpsertChunksAsync(
+			chunks,
+			embeddings.Select(x => x.Vector).ToList(),
+			cancellationToken);
+
+		return (document, chunks);
+	}
+}
