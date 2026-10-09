@@ -41,9 +41,20 @@ public sealed class ChunkImportService(
             var parts = NumberedListChunkSplitter.Split(item.Text);
             foreach (var part in parts)
             {
-                var metadata = item.Metadata is null
-                    ? new Dictionary<string, string>()
-                    : new Dictionary<string, string>(item.Metadata);
+                // Inherit book-level metadata so retrieval/reranking can distinguish
+                // books and categories without topic-specific application rules.
+                var metadata = new Dictionary<string, string>();
+                if (input.Metadata is not null)
+                {
+                    foreach (var pair in input.Metadata)
+                        metadata[$"document.{pair.Key}"] = pair.Value;
+                }
+
+                if (item.Metadata is not null)
+                {
+                    foreach (var pair in item.Metadata)
+                        metadata[pair.Key] = pair.Value;
+                }
 
                 if (part.ListItemNumber is not null)
                 {
