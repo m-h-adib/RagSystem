@@ -234,6 +234,20 @@ public sealed class RagAnswerService(
 			return new RagAnswerResult(NoAnswer, []);
 		}
 
+		var selectedSources = string.Join(
+			"\n\n",
+			sourceNumbers.Select(number =>
+			{
+				var chunk = contextResults[number - 1].Chunk;
+				return $"[منبع {number}]\nعنوان: {chunk.Title ?? ""}\nمتن: {chunk.Text}";
+			}));
+
+		if (!await IsAnswerSupportedAsync(query, answer, selectedSources, cancellationToken))
+		{
+			Console.WriteLine("[RAG DEBUG] Semantic support validation failed; abstaining.");
+			return new RagAnswerResult(NoAnswer, []);
+		}
+
 		foreach (var sourceNumber in sourceNumbers)
 		{
 			if (TryBuildGroupedOpinionAnswer(contextResults[sourceNumber - 1].Chunk.Text, out var groupedAnswer))
@@ -246,6 +260,94 @@ public sealed class RagAnswerService(
 		return new RagAnswerResult(answer, sourceNumbers);
 	}
 
+
+	private async Task<bool> IsAnswerSupportedAsync(
+		string query,
+		string answer,
+		string selectedSources,
+		CancellationToken cancellationToken)
+	{
+		var validationPrompt = $"""
+			شما اعتبارسنج مستقل پاسخ یک سامانه پرسش‌وپاسخ هستید.
+			فقط بررسی کنید آیا تمام ادعاها، حکم‌ها و شرط‌های پاسخ مستقیماً از منابع ارائه‌شده پشتیبانی می‌شوند.
+			وجود کلمات مشترک یا شباهت موضوعی کافی نیست.
+			اگر پاسخ شرطی را حذف کرده، شرط تازه‌ای ساخته، از دو شرط متفاوت نتیجه‌گیری کرده،
+			یا منبع درباره حالت دقیق سؤال ساکت/مبهم است، supported را false قرار دهید.
+			اگر منبع دو حالت متفاوت را بیان می‌کند، پاسخ نباید آن‌ها را با یک استنتاج تازه به هم وصل کند.
+			در صورت هرگونه تردید، supported=false.
+			به دانش قبلی خود تکیه نکنید و درستی فقهی پاسخ را داوری نکنید؛ فقط پشتیبانی متن را بسنجید.
+			
+			سؤال:
+			{query}
+			
+			پاسخ پیشنهادی:
+			{answer}
+			
+			منابع انتخاب‌شده:
+			{selectedSources}
+			
+			فقط JSON مطابق ساختار خواسته‌شده برگردانید.
+			""";
+
+		var request = new
+		{
+			model = _ollamaOptions.Model,
+			stream = false,
+			format = new
+			{
+				type = "object",
+				properties = new
+				{
+					supported = new { type = "boolean" },
+					reason = new { type = "string" }
+				},
+				required = new[] { "supported", "reason" }
+			},
+			messages = new[]
+			{
+				new { role = "user", content = validationPrompt }
+			}
+		};
+
+		try
+		{
+			using var response = await httpClient.PostAsJsonAsync(
+				"/api/chat", request, cancellationToken);
+			response.EnsureSuccessStatusCode();
+
+			var ollamaResponse = await response.Content.ReadFromJsonAsync<OllamaResponse>(
+				cancellationToken);
+			var raw = ollamaResponse?.Message.Content;
+			if (string.IsNullOrWhiteSpace(raw))
+			{
+				Console.WriteLine("[RAG DEBUG] Semantic validator returned empty response.");
+				return false;
+			}
+
+			var validation = JsonSerializer.Deserialize<SupportCheckResponse>(
+				raw,
+				new JsonSerializerOptions { PropertyNameCaseInsensitive = true });
+
+			Console.WriteLine($"[RAG DEBUG] Semantic support validation: {validation?.Supported}; reason: {validation?.Reason}");
+			return validation?.Supported == true;
+		}
+		catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+		{
+			throw;
+		}
+		catch (Exception ex)
+		{
+			// Fail closed: do not return an unverified answer if validation fails.
+			Console.WriteLine($"[RAG DEBUG] Semantic validator failed; abstaining. {ex.Message}");
+			return false;
+		}
+	}
+
+	private sealed class SupportCheckResponse
+	{
+		public bool Supported { get; set; }
+		public string Reason { get; set; } = string.Empty;
+	}
 
 	private static bool HasUnsupportedQuantityAnchor(
 		string query,
