@@ -36,6 +36,8 @@ public sealed class SearchController(
             Math.Max(10, finalLimit),
             100);
 
+        Console.WriteLine($"[RAG DEBUG] Query: {request.Query.Trim()}");
+
         var embedding = await embeddingService.GenerateAsync(
             request.Query.Trim(),
             cancellationToken);
@@ -50,6 +52,13 @@ public sealed class SearchController(
 
         Console.WriteLine(
             $"[RAG DEBUG] Vector results: {vectorResults.Count}");
+        Console.WriteLine("[RAG DEBUG] Top vector candidates:");
+        foreach (var item in vectorResults.Take(10))
+        {
+            Console.WriteLine(
+                $"[RAG DEBUG] VECTOR score={item.Score}, index={item.Chunk.Index}, " +
+                $"title={item.Chunk.Title}, text={Preview(item.Chunk.Text, 500)}");
+        }
 
         if (vectorResults.Count == 0)
             return Ok(new { answer = NoAnswer, sources = Array.Empty<object>() });
@@ -76,11 +85,27 @@ public sealed class SearchController(
             .Take(Math.Clamp(_ragOptions.ContextCount, 1, 20))
             .ToList();
 
+        Console.WriteLine("[RAG DEBUG] Top reranked candidates:");
+        foreach (var item in rerankedResults.OrderByDescending(x => x.Score).Take(10))
+        {
+            Console.WriteLine(
+                $"[RAG DEBUG] RERANK score={item.Score}, index={item.Chunk.Index}, " +
+                $"title={item.Chunk.Title}, text={Preview(item.Chunk.Text, 500)}");
+        }
+
         Console.WriteLine(
             $"[RAG DEBUG] Reranked results: {rerankedResults.Count}");
         Console.WriteLine(
             $"[RAG DEBUG] Context results: {relevantResults.Count}, " +
             $"top scores: {string.Join(", ", relevantResults.Select(x => x.Score))}");
+
+        Console.WriteLine("[RAG DEBUG] Exact context selected for answer generation:");
+        foreach (var item in relevantResults)
+        {
+            Console.WriteLine(
+                $"[RAG DEBUG] CONTEXT score={item.Score}, index={item.Chunk.Index}, " +
+                $"title={item.Chunk.Title}, text={Preview(item.Chunk.Text, 1200)}");
+        }
 
         if (relevantResults.Count == 0)
             return Ok(new { answer = NoAnswer, sources = Array.Empty<object>() });
@@ -112,6 +137,17 @@ public sealed class SearchController(
             .ToList();
 
         return Ok(new { answer = ragResult.Answer, sources });
+    }
+
+    private static string Preview(string? value, int maxLength)
+    {
+        if (string.IsNullOrEmpty(value))
+            return string.Empty;
+
+        var normalized = value.Replace("\r", " ").Replace("\n", " ");
+        return normalized.Length <= maxLength
+            ? normalized
+            : normalized[..maxLength] + "...";
     }
 }
 
