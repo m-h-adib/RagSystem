@@ -24,6 +24,7 @@ public static class NumberedListChunkSplitter
             return [new NumberedListPart(text.Trim(), null)];
 
         var numbers = matches
+            .Cast<Match>()
             .Select(match => ParseNumber(match.Groups["number"].Value))
             .ToArray();
 
@@ -57,12 +58,12 @@ public static class NumberedListChunkSplitter
 
     private static int ParseNumber(string value)
     {
-        var ascii = string.Concat(value.Select(character => character switch
+        var ascii = new string(value.Select(character => character switch
         {
             >= '۰' and <= '۹' => (char)('0' + character - '۰'),
             >= '٠' and <= '٩' => (char)('0' + character - '٠'),
             _ => character
-        }));
+        }).ToArray());
 
         return int.Parse(ascii, NumberStyles.None, CultureInfo.InvariantCulture);
     }
