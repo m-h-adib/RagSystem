@@ -270,7 +270,7 @@ public sealed class RagAnswerService(
 			"یک|دو|سه|چهار|پنج|شش|هفت|هشت|نه|ده|یازده|دوازده|سیزده|چهارده|پانزده|شانزده|هفده|هجده|نوزده|بیست|سی|چهل|پنجاه|شصت|هفتاد|هشتاد|نود|صد";
 		var matches = Regex.Matches(
 			normalizedQuery,
-			$@"(?<![\\p{{L}}\\p{{N}}])(?:{numberWords}|[0-9۰-۹]+)\\s+(?<anchor>[\\p{{L}}]+)",
+			$@"(?<![\p{{L}}\p{{N}}])(?:{numberWords}|[0-9۰-۹]+)\s+(?<anchor>[\p{{L}}]+)",
 			RegexOptions.CultureInvariant);
 
 		foreach (Match match in matches)
@@ -278,7 +278,7 @@ public sealed class RagAnswerService(
 			var anchor = match.Groups["anchor"].Value;
 			if (!Regex.IsMatch(
 				normalizedContext,
-				$@"(?<![\\p{{L}}]){Regex.Escape(anchor)}(?![\\p{{L}}])",
+				$@"(?<![\p{{L}}]){Regex.Escape(anchor)}(?![\p{{L}}])",
 				RegexOptions.CultureInvariant))
 			{
 				Console.WriteLine($"[RAG DEBUG] Unsupported quantity anchor: {match.Value}");
