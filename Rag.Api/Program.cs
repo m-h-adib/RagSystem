@@ -184,9 +184,6 @@ builder.Services
     .Validate(
         options => options.CandidateCount is >= 10 and <= 100,
         "Rag CandidateCount must be between 10 and 100.")
-    .Validate(
-        options => options.MinRelevanceScore >= -20,
-        "Rag MinRelevanceScore is invalid.")
     .ValidateOnStart();
 
 builder.Services.AddHttpClient<IRagAnswerService, RagAnswerService>(
