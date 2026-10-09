@@ -33,36 +33,29 @@ public sealed class RagAnswerService(
             .Take(Math.Clamp(_ragOptions.ContextCount, 1, 20))
             .ToList();
 
-        // Remove chunks that merely share vocabulary with the query but discuss a
-        // different rule, condition, or subject. Answer generation only sees sources
-        // explicitly judged relevant to this exact question.
-        var relevantSourceNumbers = await GetRelevantSourceNumbersAsync(
+        // Preserve original candidate numbering because SearchController maps returned
+        // source numbers against the ordered candidate list passed into this service.
+        var selectedSourceNumbers = await GetRelevantSourceNumbersAsync(
             query, candidateResults, cancellationToken);
 
-        if (relevantSourceNumbers is null || relevantSourceNumbers.Count == 0)
+        if (selectedSourceNumbers is null || selectedSourceNumbers.Count == 0)
         {
             Console.WriteLine("[RAG DEBUG] No confidently relevant sources; abstaining.");
             return new RagAnswerResult(NoAnswerText, []);
         }
 
-        var contextResults = relevantSourceNumbers
-            .Where(number => number >= 1 && number <= candidateResults.Count)
-            .Distinct()
-            .OrderBy(number => number)
-            .Select(number => candidateResults[number - 1])
-            .ToList();
-
-        if (contextResults.Count == 0)
-            return new RagAnswerResult(NoAnswerText, []);
-
         var context = string.Join(
             "\n\n",
-            contextResults.Select((result, index) => $"""
-                [منبع {index + 1}]
-                عنوان: {result.Chunk.Title ?? ""}
-                متن:
-                {result.Chunk.Text}
-                """));
+            selectedSourceNumbers.Select(number =>
+            {
+                var result = candidateResults[number - 1];
+                return $"""
+                    [منبع {number}]
+                    عنوان: {result.Chunk.Title ?? ""}
+                    متن:
+                    {result.Chunk.Text}
+                    """;
+            }));
 
         Console.WriteLine("[RAG DEBUG] Context passed to Ollama:");
         Console.WriteLine(context);
@@ -80,7 +73,7 @@ public sealed class RagAnswerService(
             دستورالعمل:
             - فقط بر پایه متن منابع بالا پاسخ بده؛ از دانش بیرونی، حدس یا دانسته‌های عمومی استفاده نکن.
             - ابتدا تمام خواسته‌ها، شرط‌ها، استثناها و مقایسه‌های سؤال را تشخیص بده.
-            - هر منبع را جداگانه بررسی کن و فقط از بخش‌هایی استفاده کن که مستقیماً درباره همان موضوع و همان وضعیت سؤال هستند؛ منبعی با موضوع یا شرط متفاوت را صرفاً به‌دلیل داشتن واژه‌های مشابه نادیده بگیر.
+            - فقط از منابعی استفاده کن که در مرحله تشخیص ارتباط، برای همین سؤال انتخاب شده‌اند؛ منبعی با موضوع یا شرط متفاوت را صرفاً به‌دلیل داشتن واژه‌های مشابه به کار نبر.
             - پیش از نوشتن هر جمله، مطمئن شو تمام اجزای آن مستقیماً در متن یک منبع یا با ترکیب مجاز چند منبع مرتبط پشتیبانی می‌شوند؛ اگر حتی یک جزء شاهد ندارد، آن جمله را حذف کن.
             - هیچ حکم، نتیجه، عدد، شرط، استثنا، اثر شرعی یا رابطه‌ای را که صریحاً در منبع نیامده، استنتاج یا اضافه نکن.
             - بندهای یک منبع را دقیق بخوان؛ شماره‌گذاری، مثال‌ها و احکام مربوط به گروه‌ها یا شرایط مختلف را با هم ادغام نکن.
@@ -92,7 +85,7 @@ public sealed class RagAnswerService(
             - اگر شواهد کافی نیست یا پاسخ مستلزم حدس است، answer را دقیقاً برابر «{NoAnswerText}» قرار بده و sourceNumbers را آرایه خالی برگردان.
             - sourceNumbers فقط شماره برچسب‌های «[منبع N]» در ابتدای منابع بازیابی‌شده است؛ هرگز شماره بندها، گزینه‌ها، مسائل یا فهرست‌های داخل متن یک منبع را در sourceNumbers قرار نده.
             - هر منبع با برچسب مستقل «[منبع N]» مشخص شده است. اگر پاسخ فقط از منبعی با برچسب «[منبع 1]» استفاده می‌کند، sourceNumbers باید [1] باشد، حتی اگر متن همان منبع شامل بندهای شماره‌دار 1، 2، 3 و ... باشد.
-            - sourceNumbers فقط شامل شماره منابعی باشد که مستقیماً برای پاسخ استفاده شده‌اند؛ شماره‌ها باید از 1 تا {contextResults.Count} باشند.
+            - sourceNumbers فقط شامل شماره منابعی باشد که مستقیماً برای پاسخ استفاده شده‌اند؛ شماره‌ها باید از 1 تا {candidateResults.Count} باشند.
             - پاسخ را روشن، مستقل و به زبان سؤال بنویس؛ اطلاعات مرتبط و ضروری را حذف نکن.
             - خروجی فقط JSON مطابق ساختار تعیین‌شده باشد.
 
@@ -162,7 +155,7 @@ public sealed class RagAnswerService(
         // Citations are untrusted model output. Reject invalid indices rather than
         // silently mapping them to another source or returning an uncited answer.
         var sourceNumbers = (result.SourceNumbers ?? [])
-            .Where(number => number >= 1 && number <= contextResults.Count)
+            .Where(number => number >= 1 && number <= candidateResults.Count)
             .Distinct()
             .OrderBy(number => number)
             .ToList();
@@ -177,13 +170,8 @@ public sealed class RagAnswerService(
         // accidentally omit a source number even when its answer uses that source.
         // The validator identifies the source for each evidence quote; only those
         // sources are returned as citations after exact quote verification.
-        var allSources = string.Join(
-            "\n\n",
-            contextResults.Select((result, index) =>
-                $"[منبع {index + 1}]\nعنوان: {result.Chunk.Title ?? ""}\nمتن: {result.Chunk.Text}"));
-
         var validatedSourceNumbers = await IsAnswerSupportedAsync(
-            query, answer, allSources, contextResults, cancellationToken);
+            query, answer, context, candidateResults, selectedSourceNumbers, cancellationToken);
 
         if (validatedSourceNumbers is null || validatedSourceNumbers.Count == 0)
         {
@@ -304,7 +292,8 @@ public sealed class RagAnswerService(
         string query,
         string answer,
         string allSources,
-        IReadOnlyList<RerankResult> contextResults,
+        IReadOnlyList<RerankResult> candidateResults,
+        IReadOnlyList<int> selectedSourceNumbers,
         CancellationToken cancellationToken)
     {
         var validationPrompt = $"""
@@ -333,6 +322,8 @@ public sealed class RagAnswerService(
             {allSources}
 
             پاسخ را به ادعاهای اتمی و کوتاه تقسیم کن؛ هر ادعا فقط یک حکم یا شرط مستقل داشته باشد و هرگز چند حکم را در یک claim جمع نکن.
+            هر ادعای پاسخ را دقیقاً یک بار بررسی کن؛ claim تکراری نساز و ادعاهایی را که پاسخ واقعاً نگفته به فهرست اضافه نکن.
+            فقط از منابع فهرست‌شده در همین پیام شاهد انتخاب کن و sourceNumber را دقیقاً مطابق شماره اصلی [منبع N] نگه دار.
             برای هر ادعا، فقط یک شاهد کوتاه را عیناً از بدنه یکی از منابع نقل کن.
             evidence باید فقط نقل‌قول متن منبع باشد؛ شماره منبع، عنوان، عبارت «متن:» و سه‌نقطه را داخل آن نیاور.
             شاهد باید عیناً در بدنه یکی از منابع وجود داشته باشد؛ بازنویسی یا شباهت موضوعی معتبر نیست.
@@ -402,15 +393,22 @@ public sealed class RagAnswerService(
                 new JsonSerializerOptions { PropertyNameCaseInsensitive = true });
 
             var claimChecks = validation?.ClaimChecks ?? [];
+            var hasUniqueClaims = claimChecks
+                .Select(check => NormalizeEvidenceText(check.Claim))
+                .Distinct(StringComparer.Ordinal)
+                .Count() == claimChecks.Count;
+
             var evidenceIsGrounded = claimChecks.Count > 0 &&
+                hasUniqueClaims &&
                 claimChecks.All(check =>
                     check.Supported &&
                     !string.IsNullOrWhiteSpace(check.Claim) &&
                     check.SourceNumber >= 1 &&
-                    check.SourceNumber <= contextResults.Count &&
+                    check.SourceNumber <= candidateResults.Count &&
+                    selectedSourceNumbers.Contains(check.SourceNumber) &&
                     IsVerbatimEvidence(
                         check.Evidence,
-                        contextResults[check.SourceNumber - 1].Chunk.Text ?? string.Empty) &&
+                        candidateResults[check.SourceNumber - 1].Chunk.Text ?? string.Empty) &&
                     HasSufficientClaimEvidence(check.Claim, check.Evidence));
 
             Console.WriteLine(
@@ -423,10 +421,11 @@ public sealed class RagAnswerService(
             {
                 var evidenceFoundVerbatim =
                     check.SourceNumber >= 1 &&
-                    check.SourceNumber <= contextResults.Count &&
+                    check.SourceNumber <= candidateResults.Count &&
+                    selectedSourceNumbers.Contains(check.SourceNumber) &&
                     IsVerbatimEvidence(
                         check.Evidence,
-                        contextResults[check.SourceNumber - 1].Chunk.Text ?? string.Empty);
+                        candidateResults[check.SourceNumber - 1].Chunk.Text ?? string.Empty);
                 var evidenceMatchesClaim = evidenceFoundVerbatim &&
                     HasSufficientClaimEvidence(check.Claim, check.Evidence);
 
