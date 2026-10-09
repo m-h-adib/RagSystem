@@ -262,19 +262,18 @@ public sealed class RagAnswerService(
                 numbers.ValueKind != JsonValueKind.Array)
                 return null;
 
-			var selected = numbers.ValueKind == JsonValueKind.Array
-	         ? numbers.EnumerateArray()
-		         .Where(item =>
-			         item.ValueKind == JsonValueKind.Number &&
-			         item.TryGetInt32(out _))
-		         .Select(item => item.GetInt32())
-		         .Where(number =>
-			         number >= 1 &&
-			         number <= candidateResults.Count)
-		         .Distinct()
-		         .OrderBy(number => number)
-		         .ToList()
-	         : new List<int>();
+			var selected = numbers
+                .EnumerateArray()
+                .Where(item =>
+                    item.ValueKind == JsonValueKind.Number &&
+                    item.TryGetInt32(out _))
+                .Select(item => item.GetInt32())
+                .Where(number =>
+                    number >= 1 &&
+                    number <= candidateResults.Count)
+                .Distinct()
+                .OrderBy(number => number)
+                .ToList();
 
 			Console.WriteLine(
                 $"[RAG DEBUG] Relevant source candidates: {string.Join(", ", selected)}");
