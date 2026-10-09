@@ -214,6 +214,15 @@ public sealed class RagAnswerService(
 			.OrderBy(number => number)
 			.ToList();
 
+		// Never return a generated answer that cannot be tied to at least one
+		// valid context source. This is a citation-integrity guard, not proof
+		// that the selected source actually supports every claim.
+		if (sourceNumbers.Count == 0)
+		{
+			Console.WriteLine("[RAG DEBUG] No valid source numbers returned; abstaining.");
+			return new RagAnswerResult(NoAnswer, []);
+		}
+
 		foreach (var sourceNumber in sourceNumbers)
 		{
 			if (TryBuildGroupedOpinionAnswer(contextResults[sourceNumber - 1].Chunk.Text, out var groupedAnswer))
