@@ -87,8 +87,14 @@ public sealed class RagAnswerServiceRegressionTests
 
         Assert.Equal("طبق متن، نماز این گروه در مشاعر تمام است.", result.Answer);
         Assert.Equal(new[] { 2 }, result.SourceNumbers);
-        Assert.Contains("[منبع 2]", handler.RequestBodies[1]);
-        Assert.DoesNotContain(irrelevant, handler.RequestBodies[1]);
+        using var answerRequest = JsonDocument.Parse(handler.RequestBodies[1]);
+        var answerPrompt = answerRequest.RootElement
+            .GetProperty("messages")[0]
+            .GetProperty("content")
+            .GetString()!;
+
+        Assert.Contains("[منبع 2]", answerPrompt);
+        Assert.DoesNotContain(irrelevant, answerPrompt);
         Assert.Equal(3, handler.CallCount);
     }
 
