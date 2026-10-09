@@ -253,6 +253,10 @@ public sealed class RagAnswerService(
             if (string.IsNullOrWhiteSpace(raw))
                 return false;
 
+            Console.WriteLine("===== OLLAMA RAW SUPPORT VALIDATION =====");
+            Console.WriteLine(raw);
+            Console.WriteLine("=========================================");
+
             var validation = JsonSerializer.Deserialize<SupportCheckResponse>(
                 raw,
                 new JsonSerializerOptions { PropertyNameCaseInsensitive = true });
@@ -272,10 +276,15 @@ public sealed class RagAnswerService(
 
             foreach (var check in claimChecks)
             {
+                var evidenceFoundVerbatim =
+                    !string.IsNullOrWhiteSpace(check.Evidence) &&
+                    selectedSources.Contains(check.Evidence, StringComparison.Ordinal);
+
                 Console.WriteLine(
                     $"[RAG DEBUG] Claim supported: {check.Supported}; " +
-                    $"evidence found verbatim: {!string.IsNullOrWhiteSpace(check.Evidence) && selectedSources.Contains(check.Evidence, StringComparison.Ordinal)}; " +
+                    $"evidence found verbatim: {evidenceFoundVerbatim}; " +
                     $"claim: {check.Claim}");
+                Console.WriteLine($"[RAG DEBUG] Evidence returned: >>>{check.Evidence}<<<");
             }
 
             // Fail closed unless every checked claim has a verbatim evidence quote
