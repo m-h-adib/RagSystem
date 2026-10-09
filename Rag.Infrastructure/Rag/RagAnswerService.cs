@@ -29,9 +29,31 @@ public sealed class RagAnswerService(
         if (results.Count == 0)
             return new RagAnswerResult(NoAnswerText, []);
 
-        var contextResults = results
+        var candidateResults = results
             .Take(Math.Clamp(_ragOptions.ContextCount, 1, 20))
             .ToList();
+
+        // Remove chunks that merely share vocabulary with the query but discuss a
+        // different rule, condition, or subject. Answer generation only sees sources
+        // explicitly judged relevant to this exact question.
+        var relevantSourceNumbers = await GetRelevantSourceNumbersAsync(
+            query, candidateResults, cancellationToken);
+
+        if (relevantSourceNumbers is null || relevantSourceNumbers.Count == 0)
+        {
+            Console.WriteLine("[RAG DEBUG] No confidently relevant sources; abstaining.");
+            return new RagAnswerResult(NoAnswerText, []);
+        }
+
+        var contextResults = relevantSourceNumbers
+            .Where(number => number >= 1 && number <= candidateResults.Count)
+            .Distinct()
+            .OrderBy(number => number)
+            .Select(number => candidateResults[number - 1])
+            .ToList();
+
+        if (contextResults.Count == 0)
+            return new RagAnswerResult(NoAnswerText, []);
 
         var context = string.Join(
             "\n\n",
@@ -172,6 +194,110 @@ public sealed class RagAnswerService(
         // Return exactly the text that was validated and cite only sources whose
         // body contains evidence accepted by the validator.
         return new RagAnswerResult(answer, validatedSourceNumbers);
+    }
+
+    private async Task<List<int>?> GetRelevantSourceNumbersAsync(
+        string query,
+        IReadOnlyList<RerankResult> candidateResults,
+        CancellationToken cancellationToken)
+    {
+        var sourceContext = string.Join(
+            "\n\n",
+            candidateResults.Select((result, index) => $"""
+                [منبع {index + 1}]
+                عنوان: {result.Chunk.Title ?? ""}
+                متن:
+                {result.Chunk.Text}
+                """));
+
+        var prompt = $"""
+            نقش: ارزیاب ارتباط منبع با سؤال برای یک سامانه RAG.
+
+            سؤال کاربر:
+            {query}
+
+            منابع نامزد:
+            {sourceContext}
+
+            برای هر منبع تصمیم بگیر آیا محتوای آن مستقیماً برای پاسخ‌دادن به همین سؤال لازم و مرتبط است.
+            فقط شماره منابعی را انتخاب کن که همان موضوع، وضعیت، شرط و نوع حکم مورد سؤال را پوشش می‌دهند.
+            منبعی را فقط به دلیل داشتن واژه‌های مشابه انتخاب نکن.
+            منبعی درباره وضعیت، حکم، گروه اشخاص یا شرط متفاوت را مرتبط محسوب نکن؛
+            برای مثال، یک قاعده درباره یک وضعیت متفاوت را صرفاً به خاطر شباهت واژگانی وارد نکن.
+            اگر منبع فقط بخشی از موضوع عمومی را ذکر می‌کند اما برای سؤال فعلی کاربرد مستقیم ندارد، آن را حذف کن.
+            اگر در ارتباط منبع با سؤال تردید داری، آن را حذف کن.
+            اگر هیچ منبعی مستقیماً مرتبط نیست، آرایه خالی برگردان.
+            این مرحله صحت حکم را تأیید نمی‌کند؛ فقط ارتباط منبع با سؤال را می‌سنجد.
+            شماره‌ها باید دقیقاً با برچسب [منبع N] مطابقت داشته باشند.
+
+            فقط JSON با فیلد relevantSourceNumbers از نوع آرایه اعداد صحیح برگردان.
+            """;
+
+        var request = new
+        {
+            model = _ollamaOptions.Model,
+            stream = false,
+            format = new
+            {
+                type = "object",
+                properties = new
+                {
+                    relevantSourceNumbers = new
+                    {
+                        type = "array",
+                        items = new { type = "integer" }
+                    }
+                },
+                required = new[] { "relevantSourceNumbers" }
+            },
+            messages = new[] { new { role = "user", content = prompt } }
+        };
+
+        try
+        {
+            using var response = await httpClient.PostAsJsonAsync(
+                "/api/chat", request, cancellationToken);
+            response.EnsureSuccessStatusCode();
+
+            var ollamaResponse = await response.Content.ReadFromJsonAsync<OllamaResponse>(
+                cancellationToken);
+            var raw = ollamaResponse?.Message.Content;
+            if (string.IsNullOrWhiteSpace(raw))
+                return null;
+
+            Console.WriteLine("===== OLLAMA RAW SOURCE RELEVANCE =====");
+            Console.WriteLine(raw);
+            Console.WriteLine("=======================================");
+
+            using var document = JsonDocument.Parse(raw);
+            if (!document.RootElement.TryGetProperty("relevantSourceNumbers", out var numbers) ||
+                numbers.ValueKind != JsonValueKind.Array)
+                return null;
+
+            var selected = numbers
+                .Where(item => item.ValueKind == JsonValueKind.Number && item.TryGetInt32(out _))
+                .Select(item => item.GetInt32())
+                .Where(number => number >= 1 && number <= candidateResults.Count)
+                .Distinct()
+                .OrderBy(number => number)
+                .ToList();
+
+            Console.WriteLine(
+                $"[RAG DEBUG] Relevant source candidates: {string.Join(", ", selected)}");
+            return selected;
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+            throw;
+        }
+        catch (Exception exception)
+        {
+            // Fail closed if relevance classification fails; do not fall back to
+            // passing potentially unrelated chunks into answer generation.
+            Console.WriteLine(
+                $"[RAG DEBUG] Source relevance check failed; abstaining. {exception.Message}");
+            return null;
+        }
     }
 
     private async Task<List<int>?> IsAnswerSupportedAsync(
