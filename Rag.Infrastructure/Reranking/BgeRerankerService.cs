@@ -1,86 +1,62 @@
-﻿using Microsoft.Extensions.Options;
+using Microsoft.Extensions.Options;
 using Rag.Application.Abstractions.Reranking;
 using Rag.Domain.Entities;
-using System;
-using System.Collections.Generic;
-using System.Linq;
+using Rag.Infrastructure.Embeddings;
 using System.Net.Http.Json;
-using System.Text;
-using System.Threading.Tasks;
 
 namespace Rag.Infrastructure.Reranking;
 
 public sealed class BgeRerankerService(
-HttpClient httpClient,
-IOptions<BgeRerankerOptions> options)
-: IRerankerService
+    HttpClient httpClient,
+    IOptions<BgeRerankerOptions> options) : IRerankerService
 {
-	private readonly BgeRerankerOptions _options = options.Value;
+    private readonly BgeRerankerOptions _options = options.Value;
 
-	public async Task<IReadOnlyList<RerankResult>> RerankAsync(
-		string query,
-		IReadOnlyList<Chunk> chunks,
-		CancellationToken cancellationToken = default)
-	{
-		if (string.IsNullOrWhiteSpace(query))
-		{
-			throw new ArgumentException(
-				"Query cannot be empty.",
-				nameof(query));
-		}
+    public async Task<IReadOnlyList<RerankResult>> RerankAsync(
+        string query,
+        IReadOnlyList<Chunk> chunks,
+        CancellationToken cancellationToken = default)
+    {
+        if (string.IsNullOrWhiteSpace(query))
+            throw new ArgumentException("Query cannot be empty.", nameof(query));
 
-		if (chunks.Count == 0)
-		{
-			return [];
-		}
+        if (chunks.Count == 0)
+            return [];
 
-		var request = new RerankRequest
-		{
-			Query = query,
-			Documents = chunks
-				.Select(x => x.Text)
-				.ToList()
-		};
+        var request = new RerankRequest
+        {
+            Query = query,
+            Documents = chunks.Select(ChunkSearchTextBuilder.Build).ToList()
+        };
 
-		using var response = await httpClient.PostAsJsonAsync(
-			"/rerank",
-			request,
-			cancellationToken);
+        using var response = await httpClient.PostAsJsonAsync("/rerank", request, cancellationToken);
+        response.EnsureSuccessStatusCode();
 
-		response.EnsureSuccessStatusCode();
+        var result = await response.Content.ReadFromJsonAsync<RerankResponse>(cancellationToken);
+        if (result is null)
+            throw new InvalidOperationException("BGE Reranker returned an empty response.");
 
-		var result =
-			await response.Content.ReadFromJsonAsync<RerankResponse>(
-				cancellationToken);
+        return result.Results
+            .Where(x => x.Index >= 0 && x.Index < chunks.Count)
+            .Select(x => new RerankResult(chunks[x.Index], x.Score))
+            .OrderByDescending(x => x.Score)
+            .ToList();
+    }
 
-		if (result is null)
-		{
-			throw new InvalidOperationException(
-				"BGE Reranker returned an empty response.");
-		}
+    private sealed class RerankRequest
+    {
+        public string Query { get; init; } = string.Empty;
+        public List<string> Documents { get; init; } = [];
+    }
 
-		return result.Results
-			.Where(x => x.Index >= 0 && x.Index < chunks.Count)
-			.Select(x => new RerankResult(
-				chunks[x.Index],
-				x.Score))
-			.ToList();
-	}
+    private sealed class RerankResponse
+    {
+        public List<RerankItem> Results { get; init; } = [];
+    }
 
-	private sealed class RerankRequest
-	{
-		public string Query { get; init; } = string.Empty;
-		public List<string> Documents { get; init; } = [];
-	}
-
-	private sealed class RerankResponse
-	{
-		public List<RerankItem> Results { get; init; } = [];
-	}
-
-	private sealed class RerankItem
-	{
-		public int Index { get; init; }
-		public float Score { get; init; }
-	}
+    private sealed class RerankItem
+    {
+        public int Index { get; init; }
+        public float Score { get; init; }
+    }
 }

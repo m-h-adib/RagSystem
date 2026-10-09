@@ -89,9 +89,12 @@ builder.Services
 			out _),
 		"BGE-M3 BaseUrl is invalid.")
 	.Validate(
-		options => options.Dimension > 0,
-		"BGE-M3 Dimension must be greater than zero.")
-	.ValidateOnStart();
+        options => options.Dimension > 0,
+        "BGE-M3 Dimension must be greater than zero.")
+    .Validate(
+        options => options.MaxConcurrentRequests is >= 1 and <= 4,
+        "BGE-M3 MaxConcurrentRequests must be between 1 and 4.")
+    .ValidateOnStart();
 
 builder.Services.AddHttpClient<
 	IEmbeddingService,
@@ -176,12 +179,15 @@ builder.Services
 	.AddOptions<RagOptions>()
 	.Bind(builder.Configuration.GetSection("Rag"))
 	.Validate(
-		options => options.ContextCount > 0,
-		"Rag ContextCount must be greater than zero.")
-	.Validate(
-		options => options.MinRelevanceScore >= -20,
-		"Rag MinRelevanceScore is invalid.")
-	.ValidateOnStart();
+        options => options.ContextCount > 0,
+        "Rag ContextCount must be greater than zero.")
+    .Validate(
+        options => options.CandidateCount is >= 10 and <= 100,
+        "Rag CandidateCount must be between 10 and 100.")
+    .Validate(
+        options => options.MinRelevanceScore >= -20,
+        "Rag MinRelevanceScore is invalid.")
+    .ValidateOnStart();
 
 builder.Services.AddHttpClient<IRagAnswerService, RagAnswerService>(
 	(serviceProvider, client) =>

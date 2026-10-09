@@ -1,70 +1,60 @@
-﻿using Rag.Application.Abstractions.Documents;
+using Rag.Application.Abstractions.Documents;
 using Rag.Application.Abstractions.Embeddings;
 using Rag.Application.Abstractions.VectorStore;
 using Rag.Domain.Entities;
-using System;
-using System.Collections.Generic;
-using System.Linq;
-using System.Text;
-using System.Threading.Tasks;
+using Rag.Infrastructure.Embeddings;
 
 namespace Rag.Infrastructure.Documents;
 
 public sealed class ChunkImportService(
-	IEmbeddingService embeddingService,
-	IVectorStore vectorStore)
-	: IChunkImportService
+    IEmbeddingService embeddingService,
+    IVectorStore vectorStore) : IChunkImportService
 {
-	public async Task<(Document Document, IReadOnlyList<Chunk> Chunks)> ImportAsync(
-		ChunkImportDocument input,
-		CancellationToken cancellationToken = default)
-	{
-		if (string.IsNullOrWhiteSpace(input.Name))
-			throw new ArgumentException("نام سند الزامی است.");
+    public async Task<(Document Document, IReadOnlyList<Chunk> Chunks)> ImportAsync(
+        ChunkImportDocument input,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(input);
 
-		if (input.Chunks.Count == 0)
-			throw new ArgumentException("سند حداقل باید یک Chunk داشته باشد.");
+        if (string.IsNullOrWhiteSpace(input.Name))
+            throw new ArgumentException("نام سند الزامی است.");
 
-		var document = new Document
-		{
-			Id = Guid.NewGuid().ToString("N"),
-			Name = input.Name.Trim(),
-			Description = input.Description,
-			Metadata = input.Metadata
-		};
+        if (input.Chunks.Count == 0)
+            throw new ArgumentException("سند حداقل باید یک Chunk داشته باشد.");
 
-		var chunks = input.Chunks
-			.Where(x => !string.IsNullOrWhiteSpace(x.Text))
-			.Select((x, index) => new Chunk
-			{
-				Id = Guid.NewGuid().ToString("N"),
-				DocumentId = document.Id,
-				Text = x.Text.Trim(),
-				Title = string.IsNullOrWhiteSpace(x.Title)
-					? null
-					: x.Title.Trim(),
-				Index = index,
-				Metadata = x.Metadata
-			})
-			.ToList();
+        var document = new Document
+        {
+            Id = Guid.NewGuid().ToString("N"),
+            Name = input.Name.Trim(),
+            Description = input.Description,
+            Metadata = input.Metadata
+        };
 
-		if (chunks.Count == 0)
-			throw new ArgumentException(
-				"هیچ Chunk معتبری در سند وجود ندارد.");
+        var chunks = input.Chunks
+            .Where(x => !string.IsNullOrWhiteSpace(x.Text))
+            .Select((x, index) => new Chunk
+            {
+                Id = Guid.NewGuid().ToString("N"),
+                DocumentId = document.Id,
+                Text = x.Text.Trim(),
+                Title = string.IsNullOrWhiteSpace(x.Title) ? null : x.Title.Trim(),
+                Index = index,
+                Metadata = x.Metadata
+            })
+            .ToList();
 
-		var texts = chunks
-			.Select(x => x.Text)
-			.ToList();
+        if (chunks.Count == 0)
+            throw new ArgumentException("هیچ Chunk معتبری در سند وجود ندارد.");
 
-		var embeddings = await embeddingService.GenerateBatchAsync(
-			texts,
-			cancellationToken);
+        // Titles and section metadata must be embedded with the body text.
+        var embeddingTexts = chunks.Select(ChunkSearchTextBuilder.Build).ToList();
+        var embeddings = await embeddingService.GenerateBatchAsync(embeddingTexts, cancellationToken);
 
-		await vectorStore.UpsertChunksAsync(
-			chunks,
-			embeddings.Select(x => x.Vector).ToList(),
-			cancellationToken);
+        await vectorStore.UpsertChunksAsync(
+            chunks,
+            embeddings.Select(x => x.Vector).ToList(),
+            cancellationToken);
 
-		return (document, chunks);
-	}
+        return (document, chunks);
+    }
 }
