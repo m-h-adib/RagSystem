@@ -196,7 +196,14 @@ public sealed class RagAnswerService(
             منابع:
             {selectedSources}
 
-            فقط JSON با فیلدهای supported (boolean) و reason (string) برگردان.
+            پاسخ را به ادعاهای مستقل و قابل بررسی تقسیم کن؛ هر حکم، شرط، استثنا، عدد و نسبت دادن یک حکم به یک گروه، ادعای جداگانه است.
+            برای هر ادعا، یک شاهد کوتاه را عیناً از متن یکی از منابع نقل کن.
+            شاهد باید دقیقاً در متن منابع وجود داشته باشد؛ نقل‌قولی که بازنویسی شده یا فقط موضوع مشابهی دارد معتبر نیست.
+            صرف وجود واژه‌های مشابه، ارتباط موضوعی، یا کنار هم قرار گرفتن دو واقعیت، پشتیبانی مستقیم از ادعا محسوب نمی‌شود.
+            اگر حتی یک ادعای مهم شاهد مستقیم ندارد، یا شاهد نقل‌شده ادعا را نتیجه نمی‌دهد، آن ادعا را supported=false علامت بزن.
+            در کل supported فقط وقتی true باشد که فهرست ادعاها خالی نباشد، تمام ادعاها supported=true باشند و برای هر ادعا شاهد دقیق وجود داشته باشد.
+            فیلد evidence باید نقل‌قول عین متن منبع باشد؛ اگر شاهدی نیست، رشته خالی باشد.
+            فقط JSON با فیلدهای supported (boolean)، reason (string) و claimChecks (آرایه‌ای از {claim (string), supported (boolean), evidence (string)}) برگردان.
             """;
 
         var request = new
@@ -209,9 +216,24 @@ public sealed class RagAnswerService(
                 properties = new
                 {
                     supported = new { type = "boolean" },
-                    reason = new { type = "string" }
+                    reason = new { type = "string" },
+                    claimChecks = new
+                    {
+                        type = "array",
+                        items = new
+                        {
+                            type = "object",
+                            properties = new
+                            {
+                                claim = new { type = "string" },
+                                supported = new { type = "boolean" },
+                                evidence = new { type = "string" }
+                            },
+                            required = new[] { "claim", "supported", "evidence" }
+                        }
+                    }
                 },
-                required = new[] { "supported", "reason" }
+                required = new[] { "supported", "reason", "claimChecks" }
             },
             messages = new[]
             {
@@ -235,10 +257,30 @@ public sealed class RagAnswerService(
                 raw,
                 new JsonSerializerOptions { PropertyNameCaseInsensitive = true });
 
-            Console.WriteLine(
-                $"[RAG DEBUG] Semantic support validation: {validation?.Supported}; reason: {validation?.Reason}");
+            var claimChecks = validation?.ClaimChecks ?? [];
+            var evidenceIsGrounded = claimChecks.Count > 0 &&
+                claimChecks.All(check =>
+                    check.Supported &&
+                    !string.IsNullOrWhiteSpace(check.Claim) &&
+                    !string.IsNullOrWhiteSpace(check.Evidence) &&
+                    selectedSources.Contains(check.Evidence, StringComparison.Ordinal));
 
-            return validation?.Supported == true;
+            Console.WriteLine(
+                $"[RAG DEBUG] Semantic support validation: {validation?.Supported}; " +
+                $"claim checks: {claimChecks.Count}; grounded evidence: {evidenceIsGrounded}; " +
+                $"reason: {validation?.Reason}");
+
+            foreach (var check in claimChecks)
+            {
+                Console.WriteLine(
+                    $"[RAG DEBUG] Claim supported: {check.Supported}; " +
+                    $"evidence found verbatim: {!string.IsNullOrWhiteSpace(check.Evidence) && selectedSources.Contains(check.Evidence, StringComparison.Ordinal)}; " +
+                    $"claim: {check.Claim}");
+            }
+
+            // Fail closed unless every checked claim has a verbatim evidence quote
+            // present in the selected source text.
+            return validation?.Supported == true && evidenceIsGrounded;
         }
         catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
         {
@@ -257,6 +299,14 @@ public sealed class RagAnswerService(
     {
         public bool Supported { get; set; }
         public string Reason { get; set; } = string.Empty;
+        public List<ClaimCheck> ClaimChecks { get; set; } = [];
+    }
+
+    private sealed class ClaimCheck
+    {
+        public string Claim { get; set; } = string.Empty;
+        public bool Supported { get; set; }
+        public string Evidence { get; set; } = string.Empty;
     }
 
     private sealed class OllamaResponse
