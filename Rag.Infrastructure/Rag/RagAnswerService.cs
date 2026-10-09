@@ -267,8 +267,7 @@ public sealed class RagAnswerService(
                 claimChecks.All(check =>
                     check.Supported &&
                     !string.IsNullOrWhiteSpace(check.Claim) &&
-                    !string.IsNullOrWhiteSpace(check.Evidence) &&
-                    selectedSources.Contains(check.Evidence, StringComparison.Ordinal));
+                    IsVerbatimEvidence(check.Evidence, selectedSources));
 
             Console.WriteLine(
                 $"[RAG DEBUG] Semantic support validation: {validation?.Supported}; " +
@@ -278,8 +277,7 @@ public sealed class RagAnswerService(
             foreach (var check in claimChecks)
             {
                 var evidenceFoundVerbatim =
-                    !string.IsNullOrWhiteSpace(check.Evidence) &&
-                    selectedSources.Contains(check.Evidence, StringComparison.Ordinal);
+                    IsVerbatimEvidence(check.Evidence, selectedSources);
 
                 Console.WriteLine(
                     $"[RAG DEBUG] Claim supported: {check.Supported}; " +
@@ -303,6 +301,34 @@ public sealed class RagAnswerService(
                 $"[RAG DEBUG] Semantic validator failed; abstaining. {exception.Message}");
             return false;
         }
+    }
+
+    private static bool IsVerbatimEvidence(string? evidence, string sourceText)
+    {
+        if (string.IsNullOrWhiteSpace(evidence) ||
+            evidence.Contains("...", StringComparison.Ordinal) ||
+            evidence.Contains("…", StringComparison.Ordinal))
+            return false;
+
+        var normalizedEvidence = NormalizeEvidenceText(evidence);
+        return normalizedEvidence.Length >= 12 &&
+            NormalizeEvidenceText(sourceText).Contains(
+                normalizedEvidence, StringComparison.Ordinal);
+    }
+
+    private static string NormalizeEvidenceText(string value)
+    {
+        var normalized = value
+            .Replace('ي', 'ی')
+            .Replace('ى', 'ی')
+            .Replace('ك', 'ک')
+            .Replace('\u0640', ' ')
+            .Replace('\u200c', ' ')
+            .Replace('\r', ' ')
+            .Replace('\n', ' ')
+            .Replace('\t', ' ');
+
+        return string.Join(' ', normalized.Split(' ', StringSplitOptions.RemoveEmptyEntries));
     }
 
     private sealed class SupportCheckResponse
