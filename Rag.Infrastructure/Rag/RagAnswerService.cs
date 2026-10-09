@@ -54,6 +54,14 @@ public sealed class RagAnswerService(
         Console.WriteLine(context);
         Console.WriteLine("[RAG DEBUG] End of Ollama context.");
 
+		// A question may contain an explicit quantity/unit that the retrieved
+		// passages never mention. Do not let a topically related passage answer it.
+		if (HasUnsupportedQuantityAnchor(query, contextResults))
+		{
+			Console.WriteLine("[RAG DEBUG] Explicit quantity/unit anchor is absent from context; abstaining.");
+			return new RagAnswerResult(NoAnswer, []);
+		}
+
 		var prompt =
 			$"""
             شما یک دستیار پرسش و پاسخ مبتنی بر منابع هستید.
@@ -238,6 +246,48 @@ public sealed class RagAnswerService(
 		return new RagAnswerResult(answer, sourceNumbers);
 	}
 
+
+	private static bool HasUnsupportedQuantityAnchor(
+		string query,
+		IReadOnlyList<RerankResult> contextResults)
+	{
+		if (string.IsNullOrWhiteSpace(query) || contextResults.Count == 0)
+		{
+			return false;
+		}
+
+		static string Normalize(string value) =>
+			value.Replace('ي', 'ی').Replace('ك', 'ک');
+
+		var normalizedQuery = Normalize(query);
+		var normalizedContext = Normalize(string.Join(" ", contextResults.Select(x =>
+			$"{x.Chunk.Title} {x.Chunk.Text}")));
+
+		// Persian number words and digits followed by a quantity/unit noun.
+		// If the noun is absent from every selected source, that source cannot
+		// substantiate the explicit quantity asked about (e.g. «هشت فرسخ»).
+		const string numberWords =
+			"یک|دو|سه|چهار|پنج|شش|هفت|هشت|نه|ده|یازده|دوازده|سیزده|چهارده|پانزده|شانزده|هفده|هجده|نوزده|بیست|سی|چهل|پنجاه|شصت|هفتاد|هشتاد|نود|صد";
+		var matches = Regex.Matches(
+			normalizedQuery,
+			$@"(?<![\\p{{L}}\\p{{N}}])(?:{numberWords}|[0-9۰-۹]+)\\s+(?<anchor>[\\p{{L}}]+)",
+			RegexOptions.CultureInvariant);
+
+		foreach (Match match in matches)
+		{
+			var anchor = match.Groups["anchor"].Value;
+			if (!Regex.IsMatch(
+				normalizedContext,
+				$@"(?<![\\p{{L}}]){Regex.Escape(anchor)}(?![\\p{{L}}])",
+				RegexOptions.CultureInvariant))
+			{
+				Console.WriteLine($"[RAG DEBUG] Unsupported quantity anchor: {match.Value}");
+				return true;
+			}
+		}
+
+		return false;
+	}
 
 	private static bool TryBuildGroupedOpinionAnswer(string sourceText, out string answer)
 	{
