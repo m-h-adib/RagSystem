@@ -5,6 +5,7 @@ using Rag.Infrastructure.Ollama;
 using Rag.Infrastructure.Rag.Models;
 using System.Net.Http.Json;
 using System.Text.Json;
+using System.Text.RegularExpressions;
 
 namespace Rag.Infrastructure.Rag;
 
@@ -283,7 +284,8 @@ public sealed class RagAnswerService(
                     check.SourceNumber <= contextResults.Count &&
                     IsVerbatimEvidence(
                         check.Evidence,
-                        contextResults[check.SourceNumber - 1].Chunk.Text ?? string.Empty));
+                        contextResults[check.SourceNumber - 1].Chunk.Text ?? string.Empty) &&
+                    HasSufficientClaimEvidence(check.Claim, check.Evidence));
 
             Console.WriteLine(
                 $"[RAG DEBUG] Semantic support validation: {validation?.Supported}; " +
@@ -299,13 +301,16 @@ public sealed class RagAnswerService(
                     IsVerbatimEvidence(
                         check.Evidence,
                         contextResults[check.SourceNumber - 1].Chunk.Text ?? string.Empty);
+                var evidenceMatchesClaim = evidenceFoundVerbatim &&
+                    HasSufficientClaimEvidence(check.Claim, check.Evidence);
 
-                if (check.Supported && evidenceFoundVerbatim)
+                if (check.Supported && evidenceMatchesClaim)
                     evidenceSourceNumbers.Add(check.SourceNumber);
 
                 Console.WriteLine(
                     $"[RAG DEBUG] Claim supported: {check.Supported}; " +
                     $"evidence found verbatim: {evidenceFoundVerbatim}; " +
+                    $"evidence matches claim: {evidenceMatchesClaim}; " +
                     $"source: {check.SourceNumber}; claim: {check.Claim}");
                 Console.WriteLine($"[RAG DEBUG] Evidence returned: >>>{check.Evidence}<<<");
             }
@@ -340,6 +345,53 @@ public sealed class RagAnswerService(
         return normalizedEvidence.Length >= 12 &&
             NormalizeEvidenceText(sourceText).Contains(
                 normalizedEvidence, StringComparison.Ordinal);
+    }
+
+    private static bool HasSufficientClaimEvidence(string? claim, string? evidence)
+    {
+        if (string.IsNullOrWhiteSpace(claim) || string.IsNullOrWhiteSpace(evidence))
+            return false;
+
+        // A verbatim quote alone is not proof that it supports the claim. Require
+        // substantial lexical coverage of the claim by the quote from that same
+        // source. This is a conservative guard against a validator attaching an
+        // unrelated quote (for example, a wudu rule) to a claim about a ten-day
+        // menstrual condition. Semantic validation remains necessary; this check
+        // is an additional deterministic rejection rule, not a proof of entailment.
+        var stopWords = new HashSet<string>(StringComparer.Ordinal)
+        {
+            "اگر", "برای", "براي", "این", "آن", "یک", "است", "باشد", "شود",
+            "شده", "می", "نیز", "یا", "و", "در", "از", "به", "با", "را",
+            "که", "تا", "هر", "هم", "پس", "بعد", "قبل", "روی", "روی", "زمان",
+            "خود", "همان", "باید", "لازم", "نسبت", "مربوط", "دارد", "دارند"
+        };
+
+        static HashSet<string> GetContentTerms(string value, HashSet<string> stopWords)
+        {
+            var normalized = NormalizeEvidenceText(value)
+                .Replace('،', ' ')
+                .Replace('؛', ' ')
+                .Replace('؟', ' ')
+                .Replace('.', ' ')
+                .Replace(':', ' ')
+                .Replace(';', ' ');
+
+            return Regex.Matches(normalized, @"[\p{L}\p{Nd}]+")
+                .Select(match => match.Value)
+                .Where(token => token.Length >= 3 && !stopWords.Contains(token))
+                .ToHashSet(StringComparer.Ordinal);
+        }
+
+        var claimTerms = GetContentTerms(claim, stopWords);
+        var evidenceTerms = GetContentTerms(evidence, stopWords);
+
+        if (claimTerms.Count < 3 || evidenceTerms.Count < 2)
+            return false;
+
+        var matchedTerms = claimTerms.Count(evidenceTerms.Contains);
+        var coverage = (double)matchedTerms / claimTerms.Count;
+
+        return matchedTerms >= 2 && coverage >= 0.55;
     }
 
     private static string NormalizeEvidenceText(string value)
