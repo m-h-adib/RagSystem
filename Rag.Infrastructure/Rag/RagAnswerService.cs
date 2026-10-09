@@ -17,7 +17,7 @@ public sealed class RagAnswerService(
     private readonly OllamaOptions _ollamaOptions = ollamaOptions.Value;
     private readonly RagOptions _ragOptions = ragOptions.Value;
 
-    private const string NoAnswer =
+    private const string NoAnswerText =
         "اطلاعات کافی برای پاسخ به این سؤال در منابع موجود نیست.";
 
     public async Task<RagAnswerResult> GenerateAnswerAsync(
@@ -26,7 +26,7 @@ public sealed class RagAnswerService(
         CancellationToken cancellationToken = default)
     {
         if (results.Count == 0)
-            return new RagAnswerResult(NoAnswer, []);
+            return new RagAnswerResult(NoAnswerText, []);
 
         var contextResults = results
             .Take(Math.Clamp(_ragOptions.ContextCount, 1, 20))
@@ -61,7 +61,7 @@ public sealed class RagAnswerService(
             - شباهت موضوعی یا واژگانی به‌تنهایی دلیل کافی برای پاسخ نیست.
             - هیچ نام، حکم، عدد، شرط، استثنا یا رابطه‌ای را از یک بند یا گروه به بند دیگر منتقل نکن.
             - اگر منبع چند بند یا گروه متمایز دارد، نسبت هر ادعا به همان بند را حفظ کن.
-            - اگر شواهد کافی نیست یا پاسخ مستلزم حدس است، answer را دقیقاً برابر «{NoAnswer}» قرار بده و sourceNumbers را آرایه خالی برگردان.
+            - اگر شواهد کافی نیست یا پاسخ مستلزم حدس است، answer را دقیقاً برابر «{NoAnswerText}» قرار بده و sourceNumbers را آرایه خالی برگردان.
             - sourceNumbers فقط شماره برچسب‌های «[منبع N]» در ابتدای منابع بازیابی‌شده است؛ هرگز شماره بندها، گزینه‌ها، مسائل یا فهرست‌های داخل متن یک منبع را در sourceNumbers قرار نده.
             - هر منبع با برچسب مستقل «[منبع N]» مشخص شده است. اگر پاسخ فقط از منبعی با برچسب «[منبع 1]» استفاده می‌کند، sourceNumbers باید [1] باشد، حتی اگر متن همان منبع شامل بندهای شماره‌دار 1، 2، 3 و ... باشد.
             - sourceNumbers فقط شامل شماره منابعی باشد که مستقیماً برای پاسخ استفاده شده‌اند؛ شماره‌ها باید از 1 تا {contextResults.Count} باشند.
@@ -106,7 +106,7 @@ public sealed class RagAnswerService(
 
         var rawContent = ollamaResponse?.Message.Content;
         if (string.IsNullOrWhiteSpace(rawContent))
-            return new RagAnswerResult(NoAnswer, []);
+            return new RagAnswerResult(NoAnswerText, []);
 
         Console.WriteLine("===== OLLAMA RAW RAG RESPONSE =====");
         Console.WriteLine(rawContent);
@@ -121,15 +121,15 @@ public sealed class RagAnswerService(
         }
         catch (JsonException)
         {
-            return new RagAnswerResult(NoAnswer, []);
+            return new RagAnswerResult(NoAnswerText, []);
         }
 
         if (result is null || string.IsNullOrWhiteSpace(result.Answer))
-            return new RagAnswerResult(NoAnswer, []);
+            return new RagAnswerResult(NoAnswerText, []);
 
         var answer = result.Answer.Trim();
-        if (answer == NoAnswer)
-            return new RagAnswerResult(NoAnswer, []);
+        if (answer == NoAnswerText)
+            return new RagAnswerResult(NoAnswerText, []);
 
         // Citations are untrusted model output. Reject invalid indices rather than
         // silently mapping them to another source or returning an uncited answer.
@@ -142,7 +142,7 @@ public sealed class RagAnswerService(
         if (sourceNumbers.Count == 0)
         {
             Console.WriteLine("[RAG DEBUG] No valid source numbers returned; abstaining.");
-            return new RagAnswerResult(NoAnswer, []);
+            return new RagAnswerResult(NoAnswerText, []);
         }
 
         var selectedSources = string.Join(
@@ -157,7 +157,7 @@ public sealed class RagAnswerService(
                 query, answer, selectedSources, cancellationToken))
         {
             Console.WriteLine("[RAG DEBUG] Semantic support validation failed; abstaining.");
-            return new RagAnswerResult(NoAnswer, []);
+            return new RagAnswerResult(NoAnswerText, []);
         }
 
         // Return exactly the text that was validated. Do not post-process it with
