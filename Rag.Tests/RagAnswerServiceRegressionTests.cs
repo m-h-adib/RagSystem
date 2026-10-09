@@ -47,6 +47,21 @@ public sealed class RagAnswerServiceRegressionTests
     }
 
     [Fact]
+    public async Task MenstruationQuestion_WithOnlyIstihadaSource_AbstainsBeforeCallingOllama()
+    {
+        var handler = new QueueHttpMessageHandler();
+        var service = CreateService(handler);
+        const string query = "زنی که در دوران قاعدگی هست میتونه طواف انجام بده یا خیر؟";
+        const string istihadaSource = "مسئله7: ورود مستحاضه متوسطه و كثيره به مسجدين؛ جايز است، اگرچه غسل‌های واجبش را انجام نداده باشد.";
+
+        var result = await service.GenerateAnswerAsync(query, Results(istihadaSource));
+
+        Assert.Equal(NoAnswer, result.Answer);
+        Assert.Empty(result.SourceNumbers);
+        Assert.Equal(0, handler.CallCount);
+    }
+
+    [Fact]
     public async Task CombinedStayDurationConditions_AbstainsBeforeCallingOllama()
     {
         var handler = new QueueHttpMessageHandler();
