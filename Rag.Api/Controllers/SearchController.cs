@@ -69,16 +69,18 @@ public sealed class SearchController(
             $"max: " +
             $"{(rerankedResults.Count > 0 ? rerankedResults.Max(x => x.Score) : 0)}");
 
+        // Cross-encoder reranker scores are raw logits and may all be negative.
+        // Use relative ranking instead of an uncalibrated absolute score threshold.
         var relevantResults = rerankedResults
-            .Where(x => x.Score >= _ragOptions.MinRelevanceScore)
-            .Take(_ragOptions.ContextCount)
+            .OrderByDescending(x => x.Score)
+            .Take(Math.Clamp(_ragOptions.ContextCount, 1, 20))
             .ToList();
 
         Console.WriteLine(
             $"[RAG DEBUG] Reranked results: {rerankedResults.Count}");
         Console.WriteLine(
-            $"[RAG DEBUG] Relevant results: {relevantResults.Count}, " +
-            $"MinScore: {_ragOptions.MinRelevanceScore}");
+            $"[RAG DEBUG] Context results: {relevantResults.Count}, " +
+            $"top scores: {string.Join(", ", relevantResults.Select(x => x.Score))}");
 
         if (relevantResults.Count == 0)
             return Ok(new { answer = NoAnswer, sources = Array.Empty<object>() });
