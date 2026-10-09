@@ -78,26 +78,38 @@ public sealed class SearchController(
             $"max: " +
             $"{(rerankedResults.Count > 0 ? rerankedResults.Max(x => x.Score) : 0)}");
 
-        // Cross-encoder reranker scores are raw logits and may all be negative.
-        // Use relative ranking instead of an uncalibrated absolute score threshold.
-        var relevantResults = rerankedResults
+        var rankedResults = rerankedResults
             .OrderByDescending(x => x.Score)
-            .Take(Math.Clamp(_ragOptions.ContextCount, 1, 20))
             .ToList();
 
         Console.WriteLine("[RAG DEBUG] Top reranked candidates:");
-        foreach (var item in rerankedResults.OrderByDescending(x => x.Score).Take(10))
+        foreach (var item in rankedResults.Take(10))
         {
             Console.WriteLine(
                 $"[RAG DEBUG] RERANK score={item.Score}, index={item.Chunk.Index}, " +
                 $"title={item.Chunk.Title}, text={Preview(item.Chunk.Text, 500)}");
         }
 
+        Console.WriteLine($"[RAG DEBUG] Reranked results: {rankedResults.Count}");
+
+        // Cross-encoder scores are ranking signals, not calibrated probabilities.
+        // Exclude candidates that fall far below the best result for this query.
+        // The margin is configurable and must be evaluated against labeled queries.
+        var contextCount = Math.Clamp(_ragOptions.ContextCount, 1, 20);
+        var scoreMargin = Math.Max(0f, _ragOptions.ContextScoreMargin);
+        var topScore = rankedResults.Count > 0 ? rankedResults[0].Score : float.NegativeInfinity;
+        var scoreFloor = topScore - scoreMargin;
+
+        var relevantResults = rankedResults
+            .Where(x => x.Score >= scoreFloor)
+            .Take(contextCount)
+            .ToList();
+
         Console.WriteLine(
-            $"[RAG DEBUG] Reranked results: {rerankedResults.Count}");
-        Console.WriteLine(
-            $"[RAG DEBUG] Context results: {relevantResults.Count}, " +
-            $"top scores: {string.Join(", ", relevantResults.Select(x => x.Score))}");
+            $"[RAG DEBUG] Context selection: topScore={topScore}, " +
+            $"scoreMargin={scoreMargin}, scoreFloor={scoreFloor}, " +
+            $"contextCount={relevantResults.Count}, " +
+            $"selected scores: {string.Join(", ", relevantResults.Select(x => x.Score))}");
 
         Console.WriteLine("[RAG DEBUG] Exact context selected for answer generation:");
         foreach (var item in relevantResults)
@@ -115,9 +127,9 @@ public sealed class SearchController(
             relevantResults,
             cancellationToken);
 
-        var contextResults = relevantResults
-            .Take(_ragOptions.ContextCount)
-            .ToList();
+        // The answer service receives the already-filtered context, so source numbers
+        // must map to this same ordered list.
+        var contextResults = relevantResults;
 
         var sources = ragResult.SourceNumbers
             .Where(number => number >= 1 && number <= contextResults.Count)
