@@ -145,30 +145,34 @@ public sealed class RagAnswerService(
             return new RagAnswerResult(NoAnswerText, []);
         }
 
-        var selectedSources = string.Join(
+        // Validate against every retrieved context chunk. The answer model can
+        // accidentally omit a source number even when its answer uses that source.
+        // The validator identifies the source for each evidence quote; only those
+        // sources are returned as citations after exact quote verification.
+        var allSources = string.Join(
             "\n\n",
-            sourceNumbers.Select(number =>
-            {
-                var chunk = contextResults[number - 1].Chunk;
-                return $"[منبع {number}]\nعنوان: {chunk.Title ?? ""}\nمتن: {chunk.Text}";
-            }));
+            contextResults.Select((result, index) =>
+                $"[منبع {index + 1}]\\nعنوان: {result.Chunk.Title ?? ""}\\nمتن: {result.Chunk.Text}"));
 
-        if (!await IsAnswerSupportedAsync(
-                query, answer, selectedSources, cancellationToken))
+        var validatedSourceNumbers = await IsAnswerSupportedAsync(
+            query, answer, allSources, contextResults, cancellationToken);
+
+        if (validatedSourceNumbers is null || validatedSourceNumbers.Count == 0)
         {
             Console.WriteLine("[RAG DEBUG] Semantic support validation failed; abstaining.");
             return new RagAnswerResult(NoAnswerText, []);
         }
 
-        // Return exactly the text that was validated. Do not post-process it with
-        // a second rule that could change claims after validation.
-        return new RagAnswerResult(answer, sourceNumbers);
+        // Return exactly the text that was validated and cite only sources whose
+        // body contains evidence accepted by the validator.
+        return new RagAnswerResult(answer, validatedSourceNumbers);
     }
 
-    private async Task<bool> IsAnswerSupportedAsync(
+    private async Task<List<int>?> IsAnswerSupportedAsync(
         string query,
         string answer,
-        string selectedSources,
+        string allSources,
+        IReadOnlyList<RerankResult> contextResults,
         CancellationToken cancellationToken)
     {
         var validationPrompt = $"""
@@ -194,7 +198,7 @@ public sealed class RagAnswerService(
             {answer}
 
             منابع:
-            {selectedSources}
+            {allSources}
 
             پاسخ را به ادعاهای اتمی و کوتاه تقسیم کن؛ هر ادعا فقط یک حکم یا شرط مستقل داشته باشد و هرگز چند حکم را در یک claim جمع نکن.
             برای هر ادعا، فقط یک شاهد کوتاه را عیناً از بدنه یکی از منابع نقل کن.
@@ -203,7 +207,9 @@ public sealed class RagAnswerService(
             صرف وجود واژه‌های مشابه، ارتباط موضوعی، یا کنار هم قرار گرفتن دو واقعیت، پشتیبانی مستقیم از ادعا محسوب نمی‌شود.
             اگر حتی یک ادعای مهم شاهد مستقیم ندارد، یا شاهد نقل‌شده ادعا را نتیجه نمی‌دهد، آن ادعا را supported=false علامت بزن.
             در کل supported فقط وقتی true باشد که فهرست ادعاها خالی نباشد، تمام ادعاها supported=true باشند و برای هر ادعا شاهد دقیق وجود داشته باشد.
-            فیلد evidence باید نقل‌قول عین متن منبع باشد؛ اگر شاهدی نیست، رشته خالی باشد.
+            برای هر شاهد، sourceNumber را شماره همان منبعی قرار بده که بدنه‌اش شامل نقل‌قول است؛ شماره باید با برچسب [منبع N] مطابقت داشته باشد.
+            اگر شاهدی نیست، evidence را رشته خالی و sourceNumber را 0 قرار بده.
+            فیلد evidence باید نقل‌قول عین متن بدنه همان منبع باشد؛ عنوان و برچسب منبع جزو شاهد نیستند.
             فقط JSON برگردان که شامل فیلد supported از نوع boolean، فیلد reason از نوع string و فیلد claimChecks از نوع آرایه باشد. هر عضو claimChecks باید سه فیلد داشته باشد: claim از نوع string، supported از نوع boolean و evidence از نوع string.
             """;
 
@@ -228,9 +234,10 @@ public sealed class RagAnswerService(
                             {
                                 claim = new { type = "string" },
                                 supported = new { type = "boolean" },
-                                evidence = new { type = "string" }
+                                evidence = new { type = "string" },
+                                sourceNumber = new { type = "integer" }
                             },
-                            required = new[] { "claim", "supported", "evidence" }
+                            required = new[] { "claim", "supported", "evidence", "sourceNumber" }
                         }
                     }
                 },
@@ -267,28 +274,42 @@ public sealed class RagAnswerService(
                 claimChecks.All(check =>
                     check.Supported &&
                     !string.IsNullOrWhiteSpace(check.Claim) &&
-                    IsVerbatimEvidence(check.Evidence, selectedSources));
+                    check.SourceNumber >= 1 &&
+                    check.SourceNumber <= contextResults.Count &&
+                    IsVerbatimEvidence(
+                        check.Evidence,
+                        contextResults[check.SourceNumber - 1].Chunk.Text ?? string.Empty));
 
             Console.WriteLine(
                 $"[RAG DEBUG] Semantic support validation: {validation?.Supported}; " +
                 $"claim checks: {claimChecks.Count}; grounded evidence: {evidenceIsGrounded}; " +
                 $"reason: {validation?.Reason}");
 
+            var evidenceSourceNumbers = new HashSet<int>();
             foreach (var check in claimChecks)
             {
                 var evidenceFoundVerbatim =
-                    IsVerbatimEvidence(check.Evidence, selectedSources);
+                    check.SourceNumber >= 1 &&
+                    check.SourceNumber <= contextResults.Count &&
+                    IsVerbatimEvidence(
+                        check.Evidence,
+                        contextResults[check.SourceNumber - 1].Chunk.Text ?? string.Empty);
+
+                if (check.Supported && evidenceFoundVerbatim)
+                    evidenceSourceNumbers.Add(check.SourceNumber);
 
                 Console.WriteLine(
                     $"[RAG DEBUG] Claim supported: {check.Supported}; " +
                     $"evidence found verbatim: {evidenceFoundVerbatim}; " +
-                    $"claim: {check.Claim}");
+                    $"source: {check.SourceNumber}; claim: {check.Claim}");
                 Console.WriteLine($"[RAG DEBUG] Evidence returned: >>>{check.Evidence}<<<");
             }
 
             // Fail closed unless every checked claim has a verbatim evidence quote
             // present in the selected source text.
-            return validation?.Supported == true && evidenceIsGrounded;
+            return validation?.Supported == true && evidenceIsGrounded
+                ? evidenceSourceNumbers.OrderBy(number => number).ToList()
+                : null;
         }
         catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
         {
@@ -299,7 +320,7 @@ public sealed class RagAnswerService(
             // Fail closed: never return an answer if the validation stage failed.
             Console.WriteLine(
                 $"[RAG DEBUG] Semantic validator failed; abstaining. {exception.Message}");
-            return false;
+            return null;
         }
     }
 
@@ -343,6 +364,7 @@ public sealed class RagAnswerService(
         public string Claim { get; set; } = string.Empty;
         public bool Supported { get; set; }
         public string Evidence { get; set; } = string.Empty;
+        public int SourceNumber { get; set; }
     }
 
     private sealed class OllamaResponse
