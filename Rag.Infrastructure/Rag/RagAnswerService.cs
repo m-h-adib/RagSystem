@@ -74,6 +74,15 @@ public sealed class RagAnswerService(
 			return new RagAnswerResult(NoAnswer, []);
 		}
 
+		// For a question about one named marja, extract that marja's grouped
+		// ruling directly from the source instead of asking the LLM to regroup
+		// several opinions (which can cause incorrect attribution or citations).
+		if (TryBuildSpecificMarjaAnswer(query, contextResults, out var marjaAnswer, out var marjaSourceNumber))
+		{
+			Console.WriteLine($"[RAG DEBUG] Built a source-grounded answer for named marja; source={marjaSourceNumber}.");
+			return new RagAnswerResult(marjaAnswer, [marjaSourceNumber]);
+		}
+
 		var prompt =
 			$"""
             شما یک دستیار پرسش و پاسخ مبتنی بر منابع هستید.
@@ -366,6 +375,82 @@ public sealed class RagAnswerService(
 	{
 		public bool Supported { get; set; }
 		public string Reason { get; set; } = string.Empty;
+	}
+
+	private static bool TryBuildSpecificMarjaAnswer(
+		string query,
+		IReadOnlyList<RerankResult> contextResults,
+		out string answer,
+		out int sourceNumber)
+	{
+		answer = string.Empty;
+		sourceNumber = 0;
+
+		if (string.IsNullOrWhiteSpace(query) || contextResults.Count == 0)
+		{
+			return false;
+		}
+
+		static string Normalize(string value) =>
+			value.Replace('ي', 'ی').Replace('ك', 'ک')
+				 .Replace('ى', 'ی').Replace('أ', 'ا').Replace('إ', 'ا');
+
+		var normalizedQuery = Normalize(query);
+		string[] marjaNames =
+		[
+			"سبحانی", "سیستانی", "خامنه‌ای", "خامنه ای", "خمینی",
+			"بهجت", "تبریزی", "خویی", "زنجانی", "فاضل", "نوری",
+			"صافی", "گلپایگانی", "مکارم", "وحید", "جوادی"
+		];
+
+		var requestedMarja = marjaNames.FirstOrDefault(name =>
+			Regex.IsMatch(normalizedQuery, Regex.Escape(Normalize(name)), RegexOptions.CultureInvariant));
+
+		if (requestedMarja is null)
+		{
+			return false;
+		}
+
+		var normalizedRequestedMarja = Normalize(requestedMarja);
+		for (var sourceIndex = 0; sourceIndex < contextResults.Count; sourceIndex++)
+		{
+			var sourceText = Normalize(contextResults[sourceIndex].Chunk.Text ?? string.Empty);
+			var groups = Regex.Matches(
+				sourceText,
+				@"(?ms)^\s*\d+\s*[.．]\s*(?<body>.*?)(?=^\s*\d+\s*[.．]|\z)",
+				RegexOptions.CultureInvariant);
+
+			foreach (Match group in groups)
+			{
+				var body = group.Groups["body"].Value.Trim();
+				if (!Regex.IsMatch(
+					body,
+					$@"(?<![\p{{L}}]){Regex.Escape(normalizedRequestedMarja)}(?![\p{{L}}])",
+					RegexOptions.CultureInvariant))
+				{
+					continue;
+				}
+
+				var ruling = Regex.Split(
+					body,
+					@";\s*(?:آیات\s+عظام|آيت\s+الله|آیت\s+الله)\s*:?",
+					2,
+					RegexOptions.CultureInvariant)[0]
+					.Trim()
+					.TrimEnd('؛', ';', '.', ' ');
+
+				if (string.IsNullOrWhiteSpace(ruling))
+				{
+					continue;
+				}
+
+				answer = $"{ruling}؛ طبق متن منبع، نظر آیت‌الله {requestedMarja.Replace("خامنه ای", "خامنه‌ای")} است.";
+				sourceNumber = sourceIndex + 1;
+				return true;
+			}
+		}
+
+		return false;
 	}
 
 	private static bool HasMenstruationIstihadaMismatch(
