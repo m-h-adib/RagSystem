@@ -62,6 +62,12 @@ public sealed class RagAnswerService(
 			return new RagAnswerResult(NoAnswer, []);
 		}
 
+		if (HasMenstruationIstihadaMismatch(query, contextResults))
+		{
+			Console.WriteLine("[RAG DEBUG] Query asks about menstruation but selected source discusses istihada; abstaining.");
+			return new RagAnswerResult(NoAnswer, []);
+		}
+
 		if (HasAmbiguousStayDurationScenario(query, contextResults))
 		{
 			Console.WriteLine("[RAG DEBUG] Query combines established 10-day intention with departure before completing 10 days, while sources state different rulings for both conditions; abstaining.");
@@ -360,6 +366,43 @@ public sealed class RagAnswerService(
 	{
 		public bool Supported { get; set; }
 		public string Reason { get; set; } = string.Empty;
+	}
+
+	private static bool HasMenstruationIstihadaMismatch(
+		string query,
+		IReadOnlyList<RerankResult> contextResults)
+	{
+		if (string.IsNullOrWhiteSpace(query) || contextResults.Count == 0)
+		{
+			return false;
+		}
+
+		static string Normalize(string value) =>
+			value.Replace('ي', 'ی').Replace('ك', 'ک');
+
+		var normalizedQuery = Normalize(query);
+		var normalizedContext = Normalize(string.Join(" ", contextResults.Select(x =>
+			$"{x.Chunk.Title} {x.Chunk.Text}")));
+
+		// حیض/قاعدگی و استحاضه دو موضوع فقهی متفاوت‌اند. اگر سؤال صریحاً
+		// درباره حیض یا قاعدگی است اما همه منابع انتخاب‌شده فقط استحاضه را
+		// مطرح می‌کنند، پاسخ‌گویی از آن منابع مجاز نیست.
+		var asksAboutMenstruation = Regex.IsMatch(
+			normalizedQuery,
+			@"حیض|حائض|قاعدگی|عادت\s+ماهانه|دوران\s+قاعدگی",
+			RegexOptions.CultureInvariant);
+
+		var contextMentionsIstihada = Regex.IsMatch(
+			normalizedContext,
+			@"استحاضه|مستحاضه",
+			RegexOptions.CultureInvariant);
+
+		var contextMentionsMenstruation = Regex.IsMatch(
+			normalizedContext,
+			@"حیض|حائض|قاعدگی|عادت\s+ماهانه",
+			RegexOptions.CultureInvariant);
+
+		return asksAboutMenstruation && contextMentionsIstihada && !contextMentionsMenstruation;
 	}
 
 	private static bool HasAmbiguousStayDurationScenario(
