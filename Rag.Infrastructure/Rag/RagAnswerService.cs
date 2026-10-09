@@ -62,6 +62,12 @@ public sealed class RagAnswerService(
 			return new RagAnswerResult(NoAnswer, []);
 		}
 
+		if (HasAmbiguousStayDurationScenario(query, contextResults))
+		{
+			Console.WriteLine("[RAG DEBUG] Query combines established 10-day intention with departure before completing 10 days, while sources state different rulings for both conditions; abstaining.");
+			return new RagAnswerResult(NoAnswer, []);
+		}
+
 		var prompt =
 			$"""
             شما یک دستیار پرسش و پاسخ مبتنی بر منابع هستید.
@@ -347,6 +353,46 @@ public sealed class RagAnswerService(
 	{
 		public bool Supported { get; set; }
 		public string Reason { get; set; } = string.Empty;
+	}
+
+	private static bool HasAmbiguousStayDurationScenario(
+		string query,
+		IReadOnlyList<RerankResult> contextResults)
+	{
+		if (string.IsNullOrWhiteSpace(query) || contextResults.Count == 0)
+		{
+			return false;
+		}
+
+		static string Normalize(string value) =>
+			value.Replace('ي', 'ی').Replace('ك', 'ک');
+
+		var normalizedQuery = Normalize(query);
+		var normalizedContext = Normalize(string.Join(" ", contextResults.Select(x =>
+			$"{x.Chunk.Title} {x.Chunk.Text}")));
+
+		// This question describes two potentially conflicting facts at once:
+		// an established intention to stay ten days, but departure before ten
+		// days have elapsed. The source gives different rulings for established
+		// ten-day intention and for staying fewer than ten days before Arafat,
+		// without resolving this combined scenario.
+		var asksAboutEstablishedIntention =
+			Regex.IsMatch(normalizedQuery, @"قصد\s+(?:اقامت\s+)?ده\s+روز") &&
+			Regex.IsMatch(normalizedQuery, @"(?:قصد\s+اقامت\s+ده\s+روز.{0,100}(?:اما|ولی)|(?:اما|ولی).{0,100}قصد\s+اقامت\s+ده\s+روز)");
+
+		var asksAboutLeavingBeforeTenDays =
+			Regex.IsMatch(normalizedQuery, @"(?:پیش|قبل)\s+از\s+(?:کامل\s+شدن|تمام\s+شدن|تکمیل)\s+ده\s+روز") ||
+			Regex.IsMatch(normalizedQuery, @"کمتر\s+از\s+ده\s+روز");
+
+		var sourceStatesBothDifferentCases =
+			Regex.IsMatch(normalizedContext, @"قصد\s+اقامت\s+ده\s+روز") &&
+			Regex.IsMatch(normalizedContext, @"کمتر\s+از\s+ده\s+روز") &&
+			Regex.IsMatch(normalizedContext, @"تمام") &&
+			Regex.IsMatch(normalizedContext, @"شکسته");
+
+		return asksAboutEstablishedIntention &&
+			asksAboutLeavingBeforeTenDays &&
+			sourceStatesBothDifferentCases;
 	}
 
 	private static bool HasUnsupportedQuantityAnchor(
